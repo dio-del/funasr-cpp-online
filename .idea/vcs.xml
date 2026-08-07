@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/models/damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/models/damo/speech_ngram_lm_zh-cn-ai-wesp-fst" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/models/damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/models/damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/models/thuduj12/fst_itn_zh" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/websocket/third_party/websocket" vcs="Git" />
+  </component>
+</project>
