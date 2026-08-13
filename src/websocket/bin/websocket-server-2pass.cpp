@@ -78,7 +78,7 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
 
   std::string tmp_online_msg = FunASRGetResult(result, 0);
   if (tmp_online_msg != "") {
-    LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | online_res :" << tmp_online_msg;
+    LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | index: " << data_msg->index << " | online_res :" << tmp_online_msg;
     jsonresult["text"] = tmp_online_msg;
     jsonresult["mode"] = "2pass-online";
     jsonresult["slice_type"] = 1;
