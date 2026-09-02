@@ -12,6 +12,9 @@ cd /mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/src/websocket/docker
 
 ./build.sh
 
+# load
+docker load -i funasr-websocket-server.tar
+
 # docker 启动流程
 docker run -d \
     -p 10095:10095 \
