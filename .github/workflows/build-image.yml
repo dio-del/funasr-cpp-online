@@ -69,6 +69,11 @@ jobs:
           -DFFMPEG_DIR=src/websocket/docker/${{ matrix.ffmpeg_dir }}
           -DCMAKE_CXX_FLAGS="-Wno-error=missing-template-keyword -Wno-error -Wno-error=unused-but-set-variable -Wno-error=deprecated-declarations -I ${ONNX_DIR}/include"
 
+      - name: Verify ONNX Runtime include dir exists
+        run: |
+          ls -la "${ONNX_DIR}/include/onnxruntime_run_options_config_keys.h" || echo "MISSING in ${ONNX_DIR}/include"
+          find . -name "onnxruntime_run_options_config_keys.h" 2>/dev/null | head -5
+
       - name: Build
         run: cmake --build build --parallel "$(nproc)"
 
