@@ -4,3 +4,24 @@
 # === CMake 构建产物（CI 会重新生成） ===
 /build/
 build/
+
+# === 第三方运行时库（CI 会重新下载） ===
+/src/websocket/docker/onnxruntime-linux-x64-1.14.0/
+/src/websocket/docker/onnxruntime-linux-aarch64-1.17.1/
+/src/websocket/docker/ffmpeg-master-latest-linux64-gpl-shared/
+/src/websocket/docker/ffmpeg-master-latest-linuxarm64-gpl-shared/
+
+# === 软链接 ===
+/src/websocket/docker/onnxruntime-amd64
+/src/websocket/docker/onnxruntime-arm64
+/src/websocket/docker/ffmpeg-amd64
+/src/websocket/docker/ffmpeg-arm64
+
+# === 已编译二进制 / OpenSSL 源码包 ===
+/src/websocket/docker/funasr-wss-server-2pass
+/src/websocket/docker/openssl-*.tar.gz
+/src/websocket/docker/funasr-build/
+
+# === 项目根目录的大目录 ===
+/onnxruntime-linux-x64-1.14.0/
+/ffmpeg-master-latest-linux64-gpl-shared/
