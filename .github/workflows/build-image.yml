@@ -65,7 +65,7 @@ jobs:
           -DENABLE_PORTAUDIO=OFF
           -DONNXRUNTIME_DIR=src/websocket/docker/${{ matrix.onnx_dir }}
           -DFFMPEG_DIR=src/websocket/docker/${{ matrix.ffmpeg_dir }}
-          -DCMAKE_CXX_FLAGS="-Wno-error=missing-template-keyword -Wno-error -Wno-error=unused-but-set-variable -Wno-error=deprecated-declarations"
+          -DCMAKE_CXX_FLAGS="-Wno-error=missing-template-keyword -Wno-error -Wno-error=unused-but-set-variable -Wno-error=deprecated-declarations -I src/websocket/docker/${{ matrix.onnx_dir }}/include -I src/websocket/docker/${{ matrix.onnx_dir }}/include/onnxruntime"
 
       - name: Build
         run: cmake --build build --parallel "$(nproc)"
