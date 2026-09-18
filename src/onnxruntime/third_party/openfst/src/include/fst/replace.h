@@ -617,8 +617,8 @@ class ReplaceFstImpl
 
   // Returns whether a given label is a non-terminal.
   bool IsNonTerminal(Label label) const {
-    if (label < *nonterminal_set_.begin() ||
-        label > *nonterminal_set_.rbegin()) {
+    if (label < (*nonterminal_set_).begin() ||
+        label > (*nonterminal_set_).rbegin()) {
       return false;
     } else {
       return nonterminal_hash_.count(label);
@@ -801,8 +801,8 @@ class ReplaceFstImpl
       *arcp = arc;
       return true;
     }
-    if (arc.olabel == 0 || arc.olabel < *nonterminal_set_.begin() ||
-        arc.olabel > *nonterminal_set_.rbegin()) {  // Expands local FST.
+    if (arc.olabel == 0 || arc.olabel < (*nonterminal_set_).begin() ||
+        arc.olabel > (*nonterminal_set_).rbegin()) {  // Expands local FST.
       const auto nextstate =
           flags & kArcNextStateValue
               ? state_table_->FindState(
