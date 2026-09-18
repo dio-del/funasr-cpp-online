@@ -47,13 +47,19 @@ RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
     cd .. && rm -rf openssl-${OPENSSL_VERSION}*
 
 # Update library cache
+ARG TARGETARCH
 RUN echo "/opt/app/openssl-3.6.1/lib" > /etc/ld.so.conf.d/openssl-3.6.1.conf && \
     ldconfig && \
     rm -rf /usr/include/openssl && \
     cp -r /opt/app/openssl-3.6.1/include/openssl /usr/include/ && \
     ln -sf /opt/app/openssl-3.6.1/bin/openssl /usr/bin/openssl && \
-    ln -sf /opt/app/openssl-3.6.1/lib/libssl.so* /usr/lib/x86_64-linux-gnu/ && \
-    ln -sf /opt/app/openssl-3.6.1/lib/libcrypto.so* /usr/lib/x86_64-linux-gnu/
+    if [ "$TARGETARCH" = "arm64" ]; then \
+      ln -sf /opt/app/openssl-3.6.1/lib/libssl.so* /usr/lib/aarch64-linux-gnu/ && \
+      ln -sf /opt/app/openssl-3.6.1/lib/libcrypto.so* /usr/lib/aarch64-linux-gnu/; \
+    else \
+      ln -sf /opt/app/openssl-3.6.1/lib/libssl.so* /usr/lib/x86_64-linux-gnu/ && \
+      ln -sf /opt/app/openssl-3.6.1/lib/libcrypto.so* /usr/lib/x86_64-linux-gnu/; \
+    fi
 
 # ============================================================
 # Install runtime dependencies (without default libssl-dev)
