@@ -1,0 +1,88 @@
+# FunASR C++ WebSocket Server Docker Image
+# Packages locally-built binary — no compilation inside Docker
+
+FROM ubuntu:24.04
+
+ARG TARGETARCH
+LABEL maintainer="FunASR"
+LABEL description="FunASR C++ WebSocket Server (2pass mode)"
+WORKDIR /workspace
+# ============================================================
+# Use Chinese Ubuntu mirror for Ubuntu 24.04
+# ============================================================
+RUN echo 'deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse' > /etc/apt/sources.list && \
+    echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
+    echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse' >> /etc/apt/sources.list
+
+# ============================================================
+# Install build tools for compiling OpenSSL from source
+# ============================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    wget \
+    perl \
+    ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ============================================================
+# Compile and install OpenSSL 3.6.1 from source
+# ============================================================
+ENV OPENSSL_VERSION=3.6.1
+COPY openssl-3.6.1.tar.gz /workspace/openssl-3.6.1.tar.gz
+RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
+    cd openssl-${OPENSSL_VERSION} && \
+    ./Configure --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 shared && \
+    make -j$(nproc) && \
+    make install && \
+    cd .. && rm -rf openssl-${OPENSSL_VERSION}*
+
+# Update library cache
+RUN echo "/opt/app/openssl-3.6.1/lib" > /etc/ld.so.conf.d/openssl-3.6.1.conf && \
+    ldconfig && \
+    rm -rf /usr/include/openssl && \
+    cp -r /opt/app/openssl-3.6.1/include/openssl /usr/include/ && \
+    ln -sf /opt/app/openssl-3.6.1/bin/openssl /usr/bin/openssl && \
+    ln -sf /opt/app/openssl-3.6.1/lib/libssl.so* /usr/lib/x86_64-linux-gnu/ && \
+    ln -sf /opt/app/openssl-3.6.1/lib/libcrypto.so* /usr/lib/x86_64-linux-gnu/
+
+# ============================================================
+# Install runtime dependencies (without default libssl-dev)
+# ============================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopenblas-dev \
+    libasound2t64 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set OpenSSL environment
+ENV PATH="/opt/app/openssl-3.6.1/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/app/openssl-3.6.1/lib:/opt/ffmpeg-master-latest-linux64-gpl-shared/lib:/opt/onnxruntime-linux-x64-1.14.0/lib"
+ENV OPENSSL_DIR="/opt/app/openssl-3.6.1"
+
+# ============================================================
+# Copy local ffmpeg and onnxruntime from build context
+# Multi-arch: use architecture-specific directory names
+#   onnxruntime-amd64 / onnxruntime-arm64
+#   ffmpeg-amd64 / ffmpeg-arm64
+# These must exist as links or directories in the build context.
+# ============================================================
+COPY onnxruntime-${TARGETARCH} /opt/onnxruntime
+COPY ffmpeg-${TARGETARCH} /opt/ffmpeg
+
+# ============================================================
+# Copy FunASR build output (libfunasr.so, glog, gflags, openfst, etc.)
+# ============================================================
+COPY funasr-build /opt/funasr-build
+
+# ============================================================
+# Environment
+# ============================================================
+ENV PATH="/opt/ffmpeg/bin:/opt/onnxruntime/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/onnxruntime/lib:/opt/funasr-build/src:/opt/funasr-build/glog:/opt/funasr-build/gflags/lib:/opt/funasr-build/openfst/src/lib:/opt/funasr-build/yaml-cpp:/opt/funasr-build/csrc:/opt/funasr-build/kaldi:/opt/funasr-build/_deps/portaudio-build/lib"
+
+# ============================================================
+# Copy locally-built binary from build context
+# ============================================================
+COPY funasr-wss-server-2pass funasr-wss-server-2pass
+RUN chmod +x funasr-wss-server-2pass

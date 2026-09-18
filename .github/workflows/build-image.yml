@@ -1,0 +1,141 @@
+name: FunASR WebSocket CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # ==========================================================
+  # Job 1: 在 amd64 / arm64 runner 上分别编译二进制
+  # ==========================================================
+  build-binary:
+    name: Build binary (${{ matrix.target_arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_arch: amd64
+            runner: ubuntu-24.04
+            onnx_dir: onnxruntime-amd64
+            onnx_url: https://github.com/microsoft/onnxruntime/releases/download/v1.14.0/onnxruntime-linux-x64-1.14.0.tgz
+            ffmpeg_dir: ffmpeg-amd64
+          - target_arch: arm64
+            runner: ubuntu-24.04-arm
+            onnx_dir: onnxruntime-arm64
+            onnx_url: https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-aarch64-1.17.1.tgz
+            ffmpeg_dir: ffmpeg-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git wget perl ca-certificates \
+            libopenblas-dev libasound2t64
+
+      - name: Prepare ONNX Runtime
+        run: |
+          mkdir -p "src/websocket/docker/${{ matrix.onnx_dir }}"
+          wget -q "${{ matrix.onnx_url }}"
+          tar -xzf "$(basename ${{ matrix.onnx_url }})" \
+            --strip-components=1 \
+            -C "src/websocket/docker/${{ matrix.onnx_dir }}"
+          ls "src/websocket/docker/${{ matrix.onnx_dir }}/lib" | head -5
+
+      - name: Prepare FFmpeg (skip - install via apt)
+        run: |
+          cd src/websocket/docker
+          mkdir -p "${{ matrix.ffmpeg_dir }}"/{bin,lib,include}
+          # FFmpeg: 由 Dockerfile 在容器内自动安装（用系统包）
+          # 这里只是占位目录，Dockerfile 用 apt-get install ffmpeg 等替代
+          echo "FFmpeg will be installed by Dockerfile at runtime"
+
+      - name: Configure CMake
+        run: >
+          cmake -S src/websocket
+          -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DENABLE_PORTAUDIO=OFF
+          -DONNXRUNTIME_DIR=src/websocket/docker/${{ matrix.onnx_dir }}
+          -DFFMPEG_DIR=src/websocket/docker/${{ matrix.ffmpeg_dir }}
+
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Stage binary
+        run: |
+          mkdir -p "dist-${{ matrix.target_arch }}"
+          cp build/bin/funasr-wss-server-2pass "dist-${{ matrix.target_arch }}/"
+
+      - name: Verify binary architecture
+        run: |
+          file "dist-${{ matrix.target_arch }}/funasr-wss-server-2pass"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: funasr-wss-${{ matrix.target_arch }}
+          path: dist-${{ matrix.target_arch }}/funasr-wss-server-2pass
+          if-no-files-found: error
+
+  # ==========================================================
+  # Job 2: 用 Dockerfile 构建多架构镜像并推送 GHCR
+  # ==========================================================
+  build-image:
+    name: Build & push image (${{ matrix.target_arch }})
+    needs: build-binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_arch: amd64
+            platform: linux/amd64
+            tag_suffix: amd64
+          - target_arch: arm64
+            platform: linux/arm64
+            tag_suffix: arm64
+
+    steps:
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: funasr-wss-${{ matrix.target_arch }}
+          path: dist-${{ matrix.target_arch }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/websocket/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
+            ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ github.sha }}-${{ matrix.tag_suffix }}
+          push: ${{ github.event_name != 'pull_request' }}
+          build-contexts: |
+            binary=dist-${{ matrix.target_arch }}
