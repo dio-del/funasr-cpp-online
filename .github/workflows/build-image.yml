@@ -137,13 +137,21 @@ jobs:
         with:
           name: funasr-wss-${{ matrix.target_arch }}
           path: dist-${{ matrix.target_arch }}
+          # Without this, a missing artifact silently produces an empty
+          # directory and the next step fails with a confusing 'No such file'
+          # error. With this, the action errors out clearly.
+          fail-on-missing: true
 
       - name: Debug downloaded artifact
         run: |
+          echo "=== pwd ==="
+          pwd
+          echo "=== ls -la root ==="
+          ls -la
           echo "=== ls -la dist-${{ matrix.target_arch }} ==="
           ls -la "dist-${{ matrix.target_arch }}" || true
-          echo "=== find all files ==="
-          find "dist-${{ matrix.target_arch }}" -type f || true
+          echo "=== find all files (any depth) ==="
+          find "dist-${{ matrix.target_arch }}" -mindepth 0 -maxdepth 5 || true
 
       - name: Checkout
         uses: actions/checkout@v4
