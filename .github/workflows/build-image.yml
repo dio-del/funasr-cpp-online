@@ -125,7 +125,7 @@ jobs:
         with:
           name: funasr-build-${{ matrix.target_arch }}
           path: funasr-build/
-          if-no-files-found: warning
+          if-no-files-found: warn
 
   # ==========================================================
   # Job 2: 用 Dockerfile 构建多架构镜像并推送 GHCR
