@@ -801,8 +801,8 @@ class ReplaceFstImpl
       *arcp = arc;
       return true;
     }
-    if (arc.olabel == 0 || arc.olabel < *nonterminal_set_.begin() ||
-        arc.olabel > *nonterminal_set_.rbegin()) {  // Expands local FST.
+    if (arc.olabel == 0 || arc.olabel < *nonterminal_set_.template begin() ||
+        arc.olabel > *nonterminal_set_.template rbegin()) {  // Expands local FST.
       const auto nextstate =
           flags & kArcNextStateValue
               ? state_table_->FindState(
