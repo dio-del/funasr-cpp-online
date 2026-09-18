@@ -79,7 +79,7 @@ COPY funasr-build /opt/funasr-build
 # Environment
 # ============================================================
 ENV PATH="/opt/ffmpeg/bin:/opt/onnxruntime/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/onnxruntime/lib:/opt/funasr-build/src:/opt/funasr-build/glog:/opt/funasr-build/gflags/lib:/opt/funasr-build/openfst/src/lib:/opt/funasr-build/yaml-cpp:/opt/funasr-build/csrc:/opt/funasr-build/kaldi:/opt/funasr-build/_deps/portaudio-build/lib"
+ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/onnxruntime/lib:/opt/funasr-build"
 
 # ============================================================
 # Copy locally-built binary from build context

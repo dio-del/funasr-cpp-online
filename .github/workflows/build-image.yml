@@ -110,6 +110,23 @@ jobs:
           path: dist-${{ matrix.target_arch }}/funasr-wss-server-2pass
           if-no-files-found: error
 
+      - name: Stage FunASR build artifacts
+        # Bundle libfunasr.so and friends into a funasr-build/ directory so
+        # the Dockerfile can COPY them into the image.
+        run: |
+          mkdir -p funasr-build
+          find build -maxdepth 5 \( -name "*.so" -o -name "*.so.*" \) \
+               -exec cp -P {} funasr-build/ \; 2>/dev/null || true
+          echo "=== funasr-build contents ==="
+          ls -la funasr-build | head -30
+
+      - name: Upload FunASR build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: funasr-build-${{ matrix.target_arch }}
+          path: funasr-build/
+          if-no-files-found: warning
+
   # ==========================================================
   # Job 2: 用 Dockerfile 构建多架构镜像并推送 GHCR
   # ==========================================================
@@ -141,7 +158,13 @@ jobs:
           name: funasr-wss-${{ matrix.target_arch }}
           path: dist-${{ matrix.target_arch }}
 
-      - name: Debug downloaded artifact
+      - name: Download FunASR build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: funasr-build-${{ matrix.target_arch }}
+          path: funasr-build
+
+      - name: Debug downloaded artifacts
         run: |
           echo "=== pwd ==="
           pwd
@@ -149,8 +172,11 @@ jobs:
           ls -la
           echo "=== ls -la dist-${{ matrix.target_arch }} ==="
           ls -la "dist-${{ matrix.target_arch }}" || true
+          echo "=== ls -la funasr-build ==="
+          ls -la funasr-build 2>/dev/null || echo "(missing)"
           echo "=== find all files (any depth) ==="
           find "dist-${{ matrix.target_arch }}" -mindepth 0 -maxdepth 5 || true
+          find funasr-build -mindepth 0 -maxdepth 3 2>/dev/null || true
 
       - name: Prepare Docker build context
         # Bundle every file the Dockerfile expects into a single directory so
@@ -169,20 +195,72 @@ jobs:
             exit 1
           fi
           cp "$BINARY" docker-build-context/
-          # Dockerfile COPYs onnxruntime-<arch>/ffmpeg-<arch> from this dir.
-          if [ -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" ]; then
-            cp -r "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" \
-               "docker-build-context/onnxruntime-${{ matrix.target_arch }}"
+
+          # ONNX Runtime: the build-binary job downloaded it to
+          # src/websocket/docker/onnxruntime-<arch>/, but those changes are
+          # on that job's runner and don't propagate here. Download again.
+          if [ ! -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" ]; then
+            echo "Downloading ONNX Runtime for ${{ matrix.target_arch }}..."
+            case "${{ matrix.target_arch }}" in
+              amd64) ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v1.14.0/onnxruntime-linux-x64-1.14.0.tgz" ;;
+              arm64) ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-aarch64-1.17.1.tgz" ;;
+              *) echo "Unknown arch ${{ matrix.target_arch }}"; exit 1 ;;
+            esac
+            mkdir -p "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}"
+            wget -q "$ONNX_URL" -O /tmp/onnxruntime.tgz
+            tar -xzf /tmp/onnxruntime.tgz --strip-components=1 \
+              -C "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}"
           fi
-          if [ -d "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" ]; then
-            cp -r "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" \
-               "docker-build-context/ffmpeg-${{ matrix.target_arch }}"
+          cp -r "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" \
+             "docker-build-context/onnxruntime-${{ matrix.target_arch }}"
+
+          # FFmpeg: install via apt and copy artifacts. Use a single ffmpeg
+          # install path that works on both amd64 and arm64 by detecting
+          # the multiarch tuple.
+          mkdir -p "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/"{bin,lib,include}
+          if [ ! -f "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/bin/ffmpeg" ]; then
+            echo "Installing FFmpeg..."
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+            FFMPEG_BINDIR="src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/bin"
+            cp /usr/bin/ffmpeg "$FFMPEG_BINDIR/"
+            cp /usr/bin/ffprobe "$FFMPEG_BINDIR/" 2>/dev/null || true
+            cp /usr/bin/ffplay "$FFMPEG_BINDIR/" 2>/dev/null || true
+            # Copy shared libraries from any multiarch lib dir.
+            FFMPEG_LIBDIR="src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/lib"
+            for LIBSUFFIX in x86_64-linux-gnu aarch64-linux-gnu; do
+              if [ -d "/usr/lib/$LIBSUFFIX" ]; then
+                cp /usr/lib/$LIBSUFFIX/libav*.so* "$FFMPEG_LIBDIR/" 2>/dev/null || true
+                cp /usr/lib/$LIBSUFFIX/libsw*.so* "$FFMPEG_LIBDIR/" 2>/dev/null || true
+                cp /usr/lib/$LIBSUFFIX/libpostproc*.so* "$FFMPEG_LIBDIR/" 2>/dev/null || true
+                cp -r /usr/include/$LIBSUFFIX/libav* \
+                   "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/include/" 2>/dev/null || true
+                cp -r /usr/include/$LIBSUFFIX/libsw* \
+                   "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/include/" 2>/dev/null || true
+                cp -r /usr/include/$LIBSUFFIX/libpostproc* \
+                   "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/include/" 2>/dev/null || true
+              fi
+            done
           fi
+          cp -r "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" \
+             "docker-build-context/ffmpeg-${{ matrix.target_arch }}"
+
+          # funasr-build: downloaded by an earlier step as funasr-build/.
+          if [ -d funasr-build ]; then
+            cp -r funasr-build docker-build-context/funasr-build
+          else
+            echo "::warning::funasr-build artifact missing; server may fail to start"
+            mkdir -p docker-build-context/funasr-build
+          fi
+
           # Download OpenSSL source for in-image compilation.
           if [ ! -f docker-build-context/openssl-3.6.1.tar.gz ]; then
             wget -q https://www.openssl.org/source/openssl-3.6.1.tar.gz \
               -O docker-build-context/openssl-3.6.1.tar.gz
           fi
+
+          echo "=== docker-build-context contents ==="
+          ls -la docker-build-context
           ls -la docker-build-context
 
       - name: Set up QEMU
