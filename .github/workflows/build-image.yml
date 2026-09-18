@@ -149,7 +149,14 @@ jobs:
           # Copy the Dockerfile itself into the build context so buildx can
           # resolve the filename relative to context root.
           cp src/websocket/docker/Dockerfile docker-build-context/Dockerfile
-          cp "dist-${{ matrix.target_arch }}/funasr-wss-server-2pass" docker-build-context/
+          # The locally-built binary must exist (build-binary job uploaded it).
+          BINARY="dist-${{ matrix.target_arch }}/funasr-wss-server-2pass"
+          if [ ! -f "$BINARY" ]; then
+            echo "::error::$BINARY not found. The build-binary job must produce this artifact."
+            ls -la "dist-${{ matrix.target_arch }}" || true
+            exit 1
+          fi
+          cp "$BINARY" docker-build-context/
           # Dockerfile COPYs onnxruntime-<arch>/ffmpeg-<arch> from this dir.
           if [ -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" ]; then
             cp -r "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" \
