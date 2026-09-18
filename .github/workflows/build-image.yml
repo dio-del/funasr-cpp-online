@@ -262,6 +262,9 @@ jobs:
             echo "  -> ffmpeg bin:" && ls "$FFMPEG_ROOT_NAME/bin" | head -5
             echo "  -> ffmpeg lib:" && ls "$FFMPEG_ROOT_NAME/lib" 2>/dev/null | head -5
           fi
+          # Make sure ffmpeg is executable. git may have stripped the
+          # +x bit on files that were committed (it tracks 644 by default).
+          chmod +x "$FFMPEG_ROOT_NAME/bin/ffmpeg" "$FFMPEG_ROOT_NAME/bin/ffprobe" "$FFMPEG_ROOT_NAME/bin/ffplay" 2>/dev/null || true
           if [ ! -x "$FFMPEG_ROOT_NAME/bin/ffmpeg" ]; then
             echo "::error::ffmpeg binary not found after prepare"
             exit 1
