@@ -58,14 +58,16 @@ jobs:
           echo "FFmpeg will be installed by Dockerfile at runtime"
 
       - name: Configure CMake
+        env:
+          ONNX_DIR: src/websocket/docker/${{ matrix.onnx_dir }}
         run: >
           cmake -S src/websocket
           -B build
           -DCMAKE_BUILD_TYPE=Release
           -DENABLE_PORTAUDIO=OFF
-          -DONNXRUNTIME_DIR=src/websocket/docker/${{ matrix.onnx_dir }}
+          -DONNXRUNTIME_DIR=${ONNX_DIR}
           -DFFMPEG_DIR=src/websocket/docker/${{ matrix.ffmpeg_dir }}
-          -DCMAKE_CXX_FLAGS="-Wno-error=missing-template-keyword -Wno-error -Wno-error=unused-but-set-variable -Wno-error=deprecated-declarations -I src/websocket/docker/${{ matrix.onnx_dir }}/include -I src/websocket/docker/${{ matrix.onnx_dir }}/include/onnxruntime"
+          -DCMAKE_CXX_FLAGS="-Wno-error=missing-template-keyword -Wno-error -Wno-error=unused-but-set-variable -Wno-error=deprecated-declarations -I ${ONNX_DIR}/include"
 
       - name: Build
         run: cmake --build build --parallel "$(nproc)"
