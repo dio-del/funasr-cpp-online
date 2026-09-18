@@ -138,6 +138,13 @@ jobs:
           name: funasr-wss-${{ matrix.target_arch }}
           path: dist-${{ matrix.target_arch }}
 
+      - name: Debug downloaded artifact
+        run: |
+          echo "=== ls -la dist-${{ matrix.target_arch }} ==="
+          ls -la "dist-${{ matrix.target_arch }}" || true
+          echo "=== find all files ==="
+          find "dist-${{ matrix.target_arch }}" -type f || true
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -153,7 +160,8 @@ jobs:
           BINARY="dist-${{ matrix.target_arch }}/funasr-wss-server-2pass"
           if [ ! -f "$BINARY" ]; then
             echo "::error::$BINARY not found. The build-binary job must produce this artifact."
-            ls -la "dist-${{ matrix.target_arch }}" || true
+            echo "=== full contents under dist-${{ matrix.target_arch }} ==="
+            find "dist-${{ matrix.target_arch }}" -mindepth 0 -maxdepth 5 || true
             exit 1
           fi
           cp "$BINARY" docker-build-context/
