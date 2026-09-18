@@ -153,6 +153,11 @@ jobs:
             cp -r "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" \
                "docker-build-context/ffmpeg-${{ matrix.target_arch }}"
           fi
+          # Download OpenSSL source for in-image compilation.
+          if [ ! -f docker-build-context/openssl-3.6.1.tar.gz ]; then
+            wget -q https://www.openssl.org/source/openssl-3.6.1.tar.gz \
+              -O docker-build-context/openssl-3.6.1.tar.gz
+          fi
           ls -la docker-build-context
 
       - name: Set up QEMU
@@ -172,7 +177,7 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: docker-build-context
+          context: .
           file: src/websocket/docker/Dockerfile
           platforms: ${{ matrix.platform }}
           tags: |
