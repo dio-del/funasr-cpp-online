@@ -52,6 +52,7 @@ include_directories(${PROJECT_SOURCE_DIR}/third_party/jieba/include)
 include_directories(${PROJECT_SOURCE_DIR}/third_party/jieba/include/limonp/include)
 include_directories(${PROJECT_SOURCE_DIR}/third_party/kaldi)
 include_directories(${PROJECT_SOURCE_DIR}/third_party/json/include)
+include_directories(${ONNXRUNTIME_DIR}/include)
 
 if(GPU)
     add_definitions(-DUSE_GPU)
