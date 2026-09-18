@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Compile and install OpenSSL 3.6.1 from source
 # ============================================================
 ENV OPENSSL_VERSION=3.6.1
-COPY docker-build-context/openssl-3.6.1.tar.gz /workspace/openssl-3.6.1.tar.gz
+COPY openssl-3.6.1.tar.gz /workspace/openssl-3.6.1.tar.gz
 RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
     cd openssl-${OPENSSL_VERSION} && \
     ./Configure --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 shared && \
@@ -67,13 +67,13 @@ ENV OPENSSL_DIR="/opt/app/openssl-3.6.1"
 #   ffmpeg-amd64 / ffmpeg-arm64
 # These must exist as links or directories in the build context.
 # ============================================================
-COPY docker-build-context/onnxruntime-${TARGETARCH} /opt/onnxruntime
-COPY docker-build-context/ffmpeg-${TARGETARCH} /opt/ffmpeg
+COPY onnxruntime-${TARGETARCH} /opt/onnxruntime
+COPY ffmpeg-${TARGETARCH} /opt/ffmpeg
 
 # ============================================================
 # Copy FunASR build output (libfunasr.so, glog, gflags, openfst, etc.)
 # ============================================================
-COPY docker-build-context/funasr-build /opt/funasr-build
+COPY funasr-build /opt/funasr-build
 
 # ============================================================
 # Environment
@@ -84,5 +84,5 @@ ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/onnxruntime/lib:/opt/funasr-build/src:
 # ============================================================
 # Copy locally-built binary from build context
 # ============================================================
-COPY docker-build-context/funasr-wss-server-2pass funasr-wss-server-2pass
+COPY funasr-wss-server-2pass funasr-wss-server-2pass
 RUN chmod +x funasr-wss-server-2pass

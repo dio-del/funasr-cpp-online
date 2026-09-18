@@ -143,6 +143,9 @@ jobs:
         # buildx doesn't have to chase symlinks or extra contexts.
         run: |
           mkdir -p docker-build-context
+          # Copy the Dockerfile itself into the build context so buildx can
+          # resolve the filename relative to context root.
+          cp src/websocket/docker/Dockerfile docker-build-context/Dockerfile
           cp "dist-${{ matrix.target_arch }}/funasr-wss-server-2pass" docker-build-context/
           # Dockerfile COPYs onnxruntime-<arch>/ffmpeg-<arch> from this dir.
           if [ -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" ]; then
@@ -177,8 +180,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: src/websocket/docker/Dockerfile
+          context: docker-build-context
+          file: docker-build-context/Dockerfile
           platforms: ${{ matrix.platform }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
