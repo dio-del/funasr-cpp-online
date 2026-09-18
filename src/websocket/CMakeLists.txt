@@ -14,11 +14,11 @@ option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(GPU "Whether to build with GPU" OFF)
 
 if(WIN32)
-  file(REMOVE ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/config.h 
-    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/export.h 
-    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/logging.h 
-    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/raw_logging.h 
-    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/stl_logging.h 
+  file(REMOVE ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/config.h
+    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/export.h
+    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/logging.h
+    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/raw_logging.h
+    ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/stl_logging.h
     ${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/glog/src/glog/vlog_is_on.h)
 else()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -fPIC")
@@ -142,7 +142,29 @@ endif()
 
 include_directories(${PROJECT_SOURCE_DIR}/../onnxruntime/include/)
 include_directories(${PROJECT_SOURCE_DIR}/../onnxruntime/src)
-include_directories(${ONNXRUNTIME_DIR}/include)
+# Locate ONNX Runtime's generated configuration header. Depending on the
+# ONNX Runtime release, it may be directly under include/ or nested below
+# include/onnxruntime/core/session/.
+file(GLOB_RECURSE ONNXRUNTIME_RUN_OPTIONS_HEADER
+     "${ONNXRUNTIME_DIR}/include/onnxruntime_run_options_config_keys.h")
+
+if(NOT ONNXRUNTIME_RUN_OPTIONS_HEADER)
+    message(FATAL_ERROR
+        "Could not find onnxruntime_run_options_config_keys.h under "
+        "${ONNXRUNTIME_DIR}/include")
+endif()
+
+get_filename_component(ONNXRUNTIME_SESSION_INCLUDE_DIR
+                       "${ONNXRUNTIME_RUN_OPTIONS_HEADER}" DIRECTORY)
+
+message(STATUS
+        "Using ONNX Runtime session headers from: "
+        "${ONNXRUNTIME_SESSION_INCLUDE_DIR}")
+
+include_directories(BEFORE
+    "${ONNXRUNTIME_DIR}/include"
+    "${ONNXRUNTIME_SESSION_INCLUDE_DIR}")
+
 include_directories(${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/yaml-cpp/include/)
 include_directories(${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/kaldi-native-fbank)
 include_directories(${PROJECT_SOURCE_DIR}/../onnxruntime/third_party/jieba/include)
