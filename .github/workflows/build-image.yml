@@ -199,7 +199,7 @@ jobs:
           # ONNX Runtime: the build-binary job downloaded it to
           # src/websocket/docker/onnxruntime-<arch>/, but those changes are
           # on that job's runner and don't propagate here. Download again.
-          if [ ! -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" ]; then
+          if [ ! -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}/lib" ]; then
             echo "Downloading ONNX Runtime for ${{ matrix.target_arch }}..."
             case "${{ matrix.target_arch }}" in
               amd64) ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v1.14.0/onnxruntime-linux-x64-1.14.0.tgz" ;;
@@ -210,6 +210,13 @@ jobs:
             wget -q "$ONNX_URL" -O /tmp/onnxruntime.tgz
             tar -xzf /tmp/onnxruntime.tgz --strip-components=1 \
               -C "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}"
+            echo "  -> contents:" && ls "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" | head -10
+          fi
+          # Fail loudly if the directory still doesn't have what we need.
+          if [ ! -f "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}/lib/libonnxruntime.so" ]; then
+            echo "::error::ONNX Runtime is missing lib/libonnxruntime.so after prepare"
+            find "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" -maxdepth 2 || true
+            exit 1
           fi
           cp -r "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" \
              "docker-build-context/onnxruntime-${{ matrix.target_arch }}"
@@ -241,6 +248,12 @@ jobs:
                    "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/include/" 2>/dev/null || true
               fi
             done
+            echo "  -> ffmpeg bin:" && ls "$FFMPEG_BINDIR" | head -5
+            echo "  -> ffmpeg lib:" && ls "$FFMPEG_LIBDIR" 2>/dev/null | head -5
+          fi
+          if [ ! -f "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/bin/ffmpeg" ]; then
+            echo "::error::ffmpeg binary not found after install"
+            exit 1
           fi
           cp -r "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" \
              "docker-build-context/ffmpeg-${{ matrix.target_arch }}"

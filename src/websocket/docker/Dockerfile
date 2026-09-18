@@ -7,12 +7,21 @@ ARG TARGETARCH
 LABEL maintainer="FunASR"
 LABEL description="FunASR C++ WebSocket Server (2pass mode)"
 WORKDIR /workspace
+
 # ============================================================
-# Use Chinese Ubuntu mirror for Ubuntu 24.04
+# Use Ubuntu ports mirror for arm64, aliyun for amd64.
+# aliyun's noble repo is missing some arm64 package indexes.
 # ============================================================
-RUN echo 'deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse' > /etc/apt/sources.list && \
-    echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
-    echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse' >> /etc/apt/sources.list
+ARG TARGETARCH
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      echo 'deb http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse' > /etc/apt/sources.list && \
+      echo 'deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
+      echo 'deb http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse' >> /etc/apt/sources.list; \
+    else \
+      echo 'deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse' > /etc/apt/sources.list && \
+      echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
+      echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse' >> /etc/apt/sources.list; \
+    fi
 
 # ============================================================
 # Install build tools for compiling OpenSSL from source
