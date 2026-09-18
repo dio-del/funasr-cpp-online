@@ -1,0 +1,2 @@
+/usr/bin/ar qc libcsrc.a "CMakeFiles/csrc.dir/feature-fbank.cc.o" "CMakeFiles/csrc.dir/feature-functions.cc.o" "CMakeFiles/csrc.dir/feature-window.cc.o" CMakeFiles/csrc.dir/fftsg.c.o "CMakeFiles/csrc.dir/mel-computations.cc.o" "CMakeFiles/csrc.dir/online-feature.cc.o" CMakeFiles/csrc.dir/rfft.cc.o
+/usr/bin/ranlib libcsrc.a

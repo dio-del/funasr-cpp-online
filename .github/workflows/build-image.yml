@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target_arch: amd64
+funasr-cpp-online/src/websocket/docker/onnxruntime-amd64          - target_arch: amd64
             runner: ubuntu-24.04
             onnx_dir: onnxruntime-amd64
             onnx_url: https://github.com/microsoft/onnxruntime/releases/download/v1.14.0/onnxruntime-linux-x64-1.14.0.tgz
@@ -59,19 +59,23 @@ jobs:
 
       - name: Configure CMake
         env:
-          ONNX_DIR: src/websocket/docker/${{ matrix.onnx_dir }}
+          # Use absolute paths to avoid CMAKE_CURRENT_SOURCE_DIR vs cwd mismatch.
+          # CMakeLists.txt lives in src/websocket, so a relative path passed via
+          # -D would be resolved against CMAKE_CURRENT_SOURCE_DIR (= src/websocket),
+          # not the cwd, which would yield a doubled "src/websocket/..." path.
+          ONNX_DIR: ${{ github.workspace }}/src/websocket/docker/${{ matrix.onnx_dir }}
         run: >
           cmake -S src/websocket
           -B build
           -DCMAKE_BUILD_TYPE=Release
           -DENABLE_PORTAUDIO=OFF
           -DONNXRUNTIME_DIR=${ONNX_DIR}
-          -DFFMPEG_DIR=src/websocket/docker/${{ matrix.ffmpeg_dir }}
+          -DFFMPEG_DIR=${{ github.workspace }}/src/websocket/docker/${{ matrix.ffmpeg_dir }}
           -DCMAKE_CXX_FLAGS="-Wno-error=missing-template-keyword -Wno-error -Wno-error=unused-but-set-variable -Wno-error=deprecated-declarations -I ${ONNX_DIR}/include"
 
       - name: Verify ONNX Runtime headers
         env:
-          ONNX_DIR: src/websocket/docker/${{ matrix.onnx_dir }}
+          ONNX_DIR: ${{ github.workspace }}/src/websocket/docker/${{ matrix.onnx_dir }}
         run: |
           set -euo pipefail
 
