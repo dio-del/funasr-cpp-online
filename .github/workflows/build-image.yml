@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-funasr-cpp-online/src/websocket/docker/onnxruntime-amd64          - target_arch: amd64
+          - target_arch: amd64
             runner: ubuntu-24.04
             onnx_dir: onnxruntime-amd64
             onnx_url: https://github.com/microsoft/onnxruntime/releases/download/v1.14.0/onnxruntime-linux-x64-1.14.0.tgz
