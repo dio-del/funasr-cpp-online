@@ -133,7 +133,8 @@ jobs:
   build-image:
     name: Build & push image (${{ matrix.target_arch }})
     needs: build-binary
-    runs-on: ubuntu-latest
+    # Each architecture builds on its native runner — no QEMU emulation.
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -142,9 +143,11 @@ jobs:
       matrix:
         include:
           - target_arch: amd64
+            runner: ubuntu-24.04
             platform: linux/amd64
             tag_suffix: amd64
           - target_arch: arm64
+            runner: ubuntu-24.04-arm
             platform: linux/arm64
             tag_suffix: arm64
 
@@ -196,71 +199,78 @@ jobs:
           fi
           cp "$BINARY" docker-build-context/
 
-          # ONNX Runtime: the build-binary job downloaded it to
-          # src/websocket/docker/onnxruntime-<arch>/, but those changes are
-          # on that job's runner and don't propagate here. Download again.
-          if [ ! -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}/lib" ]; then
+          # ONNX Runtime: prefer the repo-root directory (which is either a real
+          # checkout or a symlink target). Fall back to a fresh download if
+          # the build-binary job's intermediate extraction isn't here.
+          case "${{ matrix.target_arch }}" in
+            amd64)
+              ONNX_ROOT_NAME="onnxruntime-linux-x64-1.14.0"
+              ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v1.14.0/onnxruntime-linux-x64-1.14.0.tgz"
+              ;;
+            arm64)
+              ONNX_ROOT_NAME="onnxruntime-linux-aarch64-1.17.1"
+              ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-aarch64-1.17.1.tgz"
+              ;;
+            *) echo "Unknown arch ${{ matrix.target_arch }}"; exit 1 ;;
+          esac
+          if [ ! -d "$ONNX_ROOT_NAME/lib" ]; then
             echo "Downloading ONNX Runtime for ${{ matrix.target_arch }}..."
-            case "${{ matrix.target_arch }}" in
-              amd64) ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v1.14.0/onnxruntime-linux-x64-1.14.0.tgz" ;;
-              arm64) ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-aarch64-1.17.1.tgz" ;;
-              *) echo "Unknown arch ${{ matrix.target_arch }}"; exit 1 ;;
-            esac
-            mkdir -p "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}"
             wget -q "$ONNX_URL" -O /tmp/onnxruntime.tgz
-            tar -xzf /tmp/onnxruntime.tgz --strip-components=1 \
-              -C "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}"
-            echo "  -> contents:" && ls "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" | head -10
+            mkdir -p "$ONNX_ROOT_NAME"
+            tar -xzf /tmp/onnxruntime.tgz --strip-components=1 -C "$ONNX_ROOT_NAME"
+            echo "  -> contents:" && ls "$ONNX_ROOT_NAME" | head -10
           fi
-          # Fail loudly if the directory still doesn't have what we need.
-          if [ ! -f "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}/lib/libonnxruntime.so" ]; then
+          if [ ! -f "$ONNX_ROOT_NAME/lib/libonnxruntime.so" ]; then
             echo "::error::ONNX Runtime is missing lib/libonnxruntime.so after prepare"
-            find "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" -maxdepth 2 || true
+            find "$ONNX_ROOT_NAME" -maxdepth 2 || true
             exit 1
           fi
-          cp -r "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" \
-             "docker-build-context/onnxruntime-${{ matrix.target_arch }}"
+          # Copy with -L so any symlinks inside the source are followed and
+          # the destination is a real directory tree (Dockerfile COPY cannot
+          # resolve symlinks that point outside the build context).
+          cp -rL "$ONNX_ROOT_NAME" "docker-build-context/onnxruntime-${{ matrix.target_arch }}"
 
-          # FFmpeg: install via apt and copy artifacts. Use a single ffmpeg
-          # install path that works on both amd64 and arm64 by detecting
-          # the multiarch tuple.
-          mkdir -p "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/"{bin,lib,include}
-          if [ ! -f "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/bin/ffmpeg" ]; then
+          # FFmpeg: prefer the repo-root ffmpeg-master-* directory (which is either
+          # a real checkout or a symlink target). Fall back to apt install.
+          case "${{ matrix.target_arch }}" in
+            amd64) FFMPEG_ROOT_NAME="ffmpeg-master-latest-linux64-gpl-shared" ;;
+            arm64) FFMPEG_ROOT_NAME="ffmpeg-master-latest-linuxarm64-gpl-shared" ;;
+            *) echo "Unknown arch ${{ matrix.target_arch }}"; exit 1 ;;
+          esac
+          if [ ! -x "$FFMPEG_ROOT_NAME/bin/ffmpeg" ]; then
             echo "Installing FFmpeg..."
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends ffmpeg
-            FFMPEG_BINDIR="src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/bin"
-            cp /usr/bin/ffmpeg "$FFMPEG_BINDIR/"
-            cp /usr/bin/ffprobe "$FFMPEG_BINDIR/" 2>/dev/null || true
-            cp /usr/bin/ffplay "$FFMPEG_BINDIR/" 2>/dev/null || true
-            # Copy shared libraries from any multiarch lib dir.
-            FFMPEG_LIBDIR="src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/lib"
+            mkdir -p "$FFMPEG_ROOT_NAME/bin" "$FFMPEG_ROOT_NAME/lib" "$FFMPEG_ROOT_NAME/include"
+            cp /usr/bin/ffmpeg "$FFMPEG_ROOT_NAME/bin/"
+            cp /usr/bin/ffprobe "$FFMPEG_ROOT_NAME/bin/" 2>/dev/null || true
+            cp /usr/bin/ffplay "$FFMPEG_ROOT_NAME/bin/" 2>/dev/null || true
+            # Copy shared libraries from the multiarch lib dir matching this runner.
             for LIBSUFFIX in x86_64-linux-gnu aarch64-linux-gnu; do
               if [ -d "/usr/lib/$LIBSUFFIX" ]; then
-                cp /usr/lib/$LIBSUFFIX/libav*.so* "$FFMPEG_LIBDIR/" 2>/dev/null || true
-                cp /usr/lib/$LIBSUFFIX/libsw*.so* "$FFMPEG_LIBDIR/" 2>/dev/null || true
-                cp /usr/lib/$LIBSUFFIX/libpostproc*.so* "$FFMPEG_LIBDIR/" 2>/dev/null || true
+                cp /usr/lib/$LIBSUFFIX/libav*.so* "$FFMPEG_ROOT_NAME/lib/" 2>/dev/null || true
+                cp /usr/lib/$LIBSUFFIX/libsw*.so* "$FFMPEG_ROOT_NAME/lib/" 2>/dev/null || true
+                cp /usr/lib/$LIBSUFFIX/libpostproc*.so* "$FFMPEG_ROOT_NAME/lib/" 2>/dev/null || true
                 cp -r /usr/include/$LIBSUFFIX/libav* \
-                   "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/include/" 2>/dev/null || true
+                   "$FFMPEG_ROOT_NAME/include/" 2>/dev/null || true
                 cp -r /usr/include/$LIBSUFFIX/libsw* \
-                   "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/include/" 2>/dev/null || true
+                   "$FFMPEG_ROOT_NAME/include/" 2>/dev/null || true
                 cp -r /usr/include/$LIBSUFFIX/libpostproc* \
-                   "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/include/" 2>/dev/null || true
+                   "$FFMPEG_ROOT_NAME/include/" 2>/dev/null || true
               fi
             done
-            echo "  -> ffmpeg bin:" && ls "$FFMPEG_BINDIR" | head -5
-            echo "  -> ffmpeg lib:" && ls "$FFMPEG_LIBDIR" 2>/dev/null | head -5
+            echo "  -> ffmpeg bin:" && ls "$FFMPEG_ROOT_NAME/bin" | head -5
+            echo "  -> ffmpeg lib:" && ls "$FFMPEG_ROOT_NAME/lib" 2>/dev/null | head -5
           fi
-          if [ ! -f "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}/bin/ffmpeg" ]; then
-            echo "::error::ffmpeg binary not found after install"
+          if [ ! -x "$FFMPEG_ROOT_NAME/bin/ffmpeg" ]; then
+            echo "::error::ffmpeg binary not found after prepare"
             exit 1
           fi
-          cp -r "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" \
-             "docker-build-context/ffmpeg-${{ matrix.target_arch }}"
+          cp -rL "$FFMPEG_ROOT_NAME" "docker-build-context/ffmpeg-${{ matrix.target_arch }}"
 
           # funasr-build: downloaded by an earlier step as funasr-build/.
           if [ -d funasr-build ]; then
-            cp -r funasr-build docker-build-context/funasr-build
+            cp -rL funasr-build docker-build-context/funasr-build
           else
             echo "::warning::funasr-build artifact missing; server may fail to start"
             mkdir -p docker-build-context/funasr-build
@@ -274,10 +284,6 @@ jobs:
 
           echo "=== docker-build-context contents ==="
           ls -la docker-build-context
-          ls -la docker-build-context
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -295,7 +301,8 @@ jobs:
         with:
           context: docker-build-context
           file: docker-build-context/Dockerfile
-          platforms: ${{ matrix.platform }}
+          # No 'platforms' — each runner builds for its native arch
+          # (amd64 on ubuntu-24.04, arm64 on ubuntu-24.04-arm).
           tags: |
             ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
             ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ github.sha }}-${{ matrix.tag_suffix }}
