@@ -1,2 +1,0 @@
-/usr/bin/ar qc libkaldi-util.a "CMakeFiles/kaldi-util.dir/base/kaldi-error.cc.o" "CMakeFiles/kaldi-util.dir/base/kaldi-math.cc.o" "CMakeFiles/kaldi-util.dir/util/kaldi-io.cc.o" "CMakeFiles/kaldi-util.dir/util/parse-options.cc.o" "CMakeFiles/kaldi-util.dir/util/simple-io-funcs.cc.o" "CMakeFiles/kaldi-util.dir/util/text-utils.cc.o"
-/usr/bin/ranlib libkaldi-util.a

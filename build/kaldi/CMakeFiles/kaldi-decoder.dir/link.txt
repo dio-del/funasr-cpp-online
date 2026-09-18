@@ -1,2 +1,0 @@
-/usr/bin/ar qc libkaldi-decoder.a "CMakeFiles/kaldi-decoder.dir/lat/determinize-lattice-pruned.cc.o" "CMakeFiles/kaldi-decoder.dir/lat/lattice-functions.cc.o" "CMakeFiles/kaldi-decoder.dir/decoder/lattice-faster-decoder.cc.o" "CMakeFiles/kaldi-decoder.dir/decoder/lattice-faster-online-decoder.cc.o"
-/usr/bin/ranlib libkaldi-decoder.a

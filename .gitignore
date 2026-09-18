@@ -1,25 +1,6 @@
-# === 大文件/构建产物：不跟踪 ===
-# 本地的 onnxruntime / ffmpeg 运行时库（体积大，由 CI 单独下载）
-/src/websocket/docker/onnxruntime-linux-x64-1.14.0/
-/src/websocket/docker/onnxruntime-linux-aarch64-1.17.1/
-/src/websocket/docker/ffmpeg-master-latest-linux64-gpl-shared/
-/src/websocket/docker/ffmpeg-master-latest-linuxarm64-gpl-shared/
-# 软链不跟踪
-/src/websocket/docker/onnxruntime-amd64
-/src/websocket/docker/onnxruntime-arm64
-/src/websocket/docker/ffmpeg-amd64
-/src/websocket/docker/ffmpeg-arm64
-# 本地已编译的二进制（CI 会重新编）
-/src/websocket/docker/funasr-wss-server-2pass
-# OpenSSL 源码包（CI 自己下载）
-/src/websocket/docker/openssl-3.6.1.tar.gz
-# FunASR 本地构建产物
-/src/websocket/docker/funasr-build/
-
-# === 项目根目录的大目录 ===
-/onnxruntime-linux-x64-1.14.0/
-/ffmpeg-master-latest-linux64-gpl-shared/
 /models/
-/src/websocket/third_party/
 /history-dock/
-/src/websocket/build
+
+# === CMake 构建产物（CI 会重新生成） ===
+/build/
+build/
