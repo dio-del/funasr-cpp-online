@@ -138,6 +138,23 @@ jobs:
           name: funasr-wss-${{ matrix.target_arch }}
           path: dist-${{ matrix.target_arch }}
 
+      - name: Prepare Docker build context
+        # Bundle every file the Dockerfile expects into a single directory so
+        # buildx doesn't have to chase symlinks or extra contexts.
+        run: |
+          mkdir -p docker-build-context
+          cp "dist-${{ matrix.target_arch }}/funasr-wss-server-2pass" docker-build-context/
+          # Dockerfile COPYs onnxruntime-<arch>/ffmpeg-<arch> from this dir.
+          if [ -d "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" ]; then
+            cp -r "src/websocket/docker/onnxruntime-${{ matrix.target_arch }}" \
+               "docker-build-context/onnxruntime-${{ matrix.target_arch }}"
+          fi
+          if [ -d "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" ]; then
+            cp -r "src/websocket/docker/ffmpeg-${{ matrix.target_arch }}" \
+               "docker-build-context/ffmpeg-${{ matrix.target_arch }}"
+          fi
+          ls -la docker-build-context
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -155,12 +172,10 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: docker-build-context
           file: src/websocket/docker/Dockerfile
           platforms: ${{ matrix.platform }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
             ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ github.sha }}-${{ matrix.tag_suffix }}
           push: ${{ github.event_name != 'pull_request' }}
-          build-contexts: |
-            binary=dist-${{ matrix.target_arch }}
