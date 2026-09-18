@@ -138,6 +138,9 @@ jobs:
           name: funasr-wss-${{ matrix.target_arch }}
           path: dist-${{ matrix.target_arch }}
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Prepare Docker build context
         # Bundle every file the Dockerfile expects into a single directory so
         # buildx doesn't have to chase symlinks or extra contexts.
