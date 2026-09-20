@@ -310,3 +310,59 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
             ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ github.sha }}-${{ matrix.tag_suffix }}
           push: ${{ github.event_name != 'pull_request' }}
+
+  # ==========================================================
+  # Job 3: Smoke test the freshly-built image (pull + --help)
+  # ==========================================================
+  test-image:
+    name: Smoke test image (${{ matrix.target_arch }})
+    needs: build-image
+    # Same per-arch runners as build-image so the smoke test always
+    # exercises a native-arch image (no QEMU).
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            tag_suffix: amd64
+          - target_arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            tag_suffix: arm64
+
+    steps:
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and smoke-test the image
+        # Verify the image we just pushed actually starts and the
+        # binary prints its USAGE block. Pulls happen on the same
+        # arch so the smoke test doesn't need QEMU.
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
+        run: |
+          set -euo pipefail
+          echo "==> Pulling $IMAGE"
+          docker pull --platform linux/${{ matrix.platform }} "$IMAGE"
+
+          echo "==> Running $IMAGE binary with --help"
+          docker run --rm \
+            --platform linux/${{ matrix.platform }} \
+            --entrypoint /workspace/funasr-wss-server-2pass \
+            "$IMAGE" \
+            --help 2>&1 | tee /tmp/help.txt
+
+          # Sanity check: the help output must mention the binary name
+          # and at least one of our model flags. If the binary is broken
+          # or the image is empty, fail the job.
+          grep -q "funasr-wss-server-2pass" /tmp/help.txt
+          grep -q "model-dir" /tmp/help.txt
+          echo "==> Smoke test passed"
