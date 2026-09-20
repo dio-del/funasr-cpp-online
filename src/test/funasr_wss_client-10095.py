@@ -31,7 +31,7 @@ parser.add_argument(
 parser.add_argument(
     "--audio_in",
     type=str,
-    default=r".\qifengle.wav",
+    default=r".\asr_example.wav",
     help="音频输入路径；不传则使用麦克风（需安装 PyAudio）",
 )
 parser.add_argument("--audio_fs", type=int, default=16000, help="audio_fs")

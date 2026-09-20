@@ -368,3 +368,122 @@ jobs:
           grep -q "funasr-wss-server-2pass" /tmp/help.txt
           grep -q "model-dir" /tmp/help.txt
           echo "==> Smoke test passed"
+
+  # ==========================================================
+  # Job 4: End-to-end ASR test
+  # Start the built server in the background, run the Python
+  # WebSocket client against two wav files, and upload the
+  # transcripts as artifacts (amd64 / arm64). We don't fail on
+  # recognition accuracy yet — that's the CER / WER follow-up.
+  # ==========================================================
+  test-image-e2e:
+    name: E2E ASR test (${{ matrix.target_arch }})
+    needs: build-image
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            tag_suffix: amd64
+          - target_arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            tag_suffix: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install client dependencies
+        run: pip install --quiet websockets
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull built image
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
+        run: |
+          echo "==> Pulling $IMAGE"
+          docker pull --platform "${{ matrix.platform }}" "$IMAGE"
+
+      - name: Start server, run client on two wavs, stop server
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
+          ARCH: ${{ matrix.target_arch }}
+          CONTAINER_NAME: funasr-server-${{ matrix.target_arch }}
+        run: |
+          set -uo pipefail
+
+          # Start the server in the background. --rm cleans up when we stop it.
+          echo "==> Starting $IMAGE"
+          docker run -d --rm \
+            --platform "${{ matrix.platform }}" \
+            --name "${CONTAINER_NAME}" \
+            -p 10095:10095 \
+            "$IMAGE" \
+            /workspace/funasr-wss-server-2pass \
+            --download-model-dir /workspace/models \
+            --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx \
+            --online-model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx \
+            --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx \
+            --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx \
+            --itn-dir thuduj12/fst_itn_zh \
+            --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst \
+            --port 10095
+
+          # Wait for the server to bind 10095 (binary first loads models,
+          # which can take a few minutes on the first run).
+          echo "==> Waiting for server on localhost:10095"
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:10095/ >/dev/null 2>&1; then
+              echo "Server is up after ${i} attempts"
+              break
+            fi
+            sleep 5
+          done
+
+          # Run the Python WebSocket client against both wav files. Each
+          # transcript is saved with the architecture suffix so they
+          # can be diffed afterwards.
+          mkdir -p /tmp/results
+          echo "==> Running asr_example.wav"
+          python3 src/test/funasr_wss_client-10095.py \
+            --audio_in src/test/asr_example.wav \
+            --host localhost --port 10095 --mode 2pass \
+            > "/tmp/results/asr_example.${ARCH}.txt" 2>&1 || true
+
+          echo "==> Running qifengle.wav"
+          python3 src/test/funasr_wss_client-10095.py \
+            --audio_in src/test/qifengle.wav \
+            --host localhost --port 10095 --mode 2pass \
+            > "/tmp/results/qifengle.${ARCH}.txt" 2>&1 || true
+
+          # Always stop the server before exiting so the next job / re-run
+          # doesn't fail with "port already in use" or name conflict.
+          echo "==> Stopping server"
+          docker stop "${CONTAINER_NAME}" || true
+
+          echo "==> Done"
+          ls -la /tmp/results
+
+      - name: Upload ASR transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asr_results-${{ matrix.target_arch }}
+          path: /tmp/results/
+          if-no-files-found: warn
