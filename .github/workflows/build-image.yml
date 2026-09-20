@@ -351,11 +351,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "==> Pulling $IMAGE"
-          docker pull --platform linux/${{ matrix.platform }} "$IMAGE"
+          # matrix.platform already includes the 'linux/' prefix
+          # (e.g. 'linux/arm64'), so don't prepend 'linux/' again.
+          docker pull --platform "${{ matrix.platform }}" "$IMAGE"
 
           echo "==> Running $IMAGE binary with --help"
           docker run --rm \
-            --platform linux/${{ matrix.platform }} \
+            --platform "${{ matrix.platform }}" \
             --entrypoint /workspace/funasr-wss-server-2pass \
             "$IMAGE" \
             --help 2>&1 | tee /tmp/help.txt
