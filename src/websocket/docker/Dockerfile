@@ -41,7 +41,7 @@ ENV OPENSSL_VERSION=3.6.1
 COPY openssl-3.6.1.tar.gz /workspace/openssl-3.6.1.tar.gz
 RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
     cd openssl-${OPENSSL_VERSION} && \
-    ./Configure --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 shared && \
+    ./Configure --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 libdir=lib shared && \
     make -j$(nproc) && \
     make install && \
     cd .. && rm -rf openssl-${OPENSSL_VERSION}*
@@ -54,12 +54,20 @@ RUN echo "/opt/app/openssl-3.6.1/lib" > /etc/ld.so.conf.d/openssl-3.6.1.conf && 
     cp -r /opt/app/openssl-3.6.1/include/openssl /usr/include/ && \
     ln -sf /opt/app/openssl-3.6.1/bin/openssl /usr/bin/openssl && \
     if [ "$TARGETARCH" = "arm64" ]; then \
-      ln -sf /opt/app/openssl-3.6.1/lib/libssl.so* /usr/lib/aarch64-linux-gnu/ && \
-      ln -sf /opt/app/openssl-3.6.1/lib/libcrypto.so* /usr/lib/aarch64-linux-gnu/; \
+      LIBDIR=/usr/lib/aarch64-linux-gnu; \
+      ARCHDIR=aarch64-linux-gnu; \
     else \
-      ln -sf /opt/app/openssl-3.6.1/lib/libssl.so* /usr/lib/x86_64-linux-gnu/ && \
-      ln -sf /opt/app/openssl-3.6.1/lib/libcrypto.so* /usr/lib/x86_64-linux-gnu/; \
-    fi
+      LIBDIR=/usr/lib/x86_64-linux-gnu; \
+      ARCHDIR=x86_64-linux-gnu; \
+    fi && \
+    # Copy real files (not symlinks) — overwrite any existing versions
+    cp -fP /opt/app/openssl-3.6.1/lib/libssl.so* "$LIBDIR"/ && \
+    cp -fP /opt/app/openssl-3.6.1/lib/libcrypto.so* "$LIBDIR"/ && \
+    ldconfig && \
+    # Sanity check
+    echo "Installed libssl/libcrypto in $LIBDIR:" && \
+    ls -la "$LIBDIR"/libssl.so* "$LIBDIR"/libcrypto.so* && \
+    /opt/app/openssl-3.6.1/bin/openssl version -a
 
 # ============================================================
 # Install runtime dependencies (without default libssl-dev)
