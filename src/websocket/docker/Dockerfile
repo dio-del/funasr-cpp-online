@@ -3,7 +3,6 @@
 
 FROM ubuntu:24.04
 
-ARG TARGETARCH
 LABEL maintainer="FunASR"
 LABEL description="FunASR C++ WebSocket Server (2pass mode)"
 WORKDIR /workspace
@@ -41,14 +40,22 @@ ENV OPENSSL_VERSION=3.6.1
 COPY openssl-3.6.1.tar.gz /workspace/openssl-3.6.1.tar.gz
 RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
     cd openssl-${OPENSSL_VERSION} && \
-    ./Configure --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 libdir=lib shared && \
+    # Note: OpenSSL Configure defaults libdir per platform
+    #   linux-aarch64 -> lib
+    #   linux-x86_64  -> lib64  (passes our 'libdir=lib' silently)
+    # Pass the target platform explicitly + --libdir=lib to force lib/ on amd64.
+    ./Configure linux-${TARGETARCH} --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 --libdir=lib shared && \
     make -j$(nproc) && \
     make install && \
     cd .. && rm -rf openssl-${OPENSSL_VERSION}*
 
-# Update library cache
-ARG TARGETARCH
-RUN echo "/opt/app/openssl-3.6.1/lib" > /etc/ld.so.conf.d/openssl-3.6.1.conf && \
+# Update library cache.
+# Detect actual lib dir (lib or lib64) for ld.so.conf and the system lib copy.
+# OpenSSL Configure picks per-platform defaults that may differ from --libdir.
+# TARGETARCH was already declared above; no need to redeclare.
+RUN SSLDIR=$(ls -d /opt/app/openssl-3.6.1/lib /opt/app/openssl-3.6.1/lib64 2>/dev/null | head -1) && \
+    echo "OpenSSL install libdir: $SSLDIR" && \
+    echo "$SSLDIR" > /etc/ld.so.conf.d/openssl-3.6.1.conf && \
     ldconfig && \
     rm -rf /usr/include/openssl && \
     cp -r /opt/app/openssl-3.6.1/include/openssl /usr/include/ && \
@@ -60,9 +67,9 @@ RUN echo "/opt/app/openssl-3.6.1/lib" > /etc/ld.so.conf.d/openssl-3.6.1.conf && 
       LIBDIR=/usr/lib/x86_64-linux-gnu; \
       ARCHDIR=x86_64-linux-gnu; \
     fi && \
-    # Copy real files (not symlinks) — overwrite any existing versions
-    cp -fP /opt/app/openssl-3.6.1/lib/libssl.so* "$LIBDIR"/ && \
-    cp -fP /opt/app/openssl-3.6.1/lib/libcrypto.so* "$LIBDIR"/ && \
+    echo "Copying OpenSSL libs from $SSLDIR to $LIBDIR" && \
+    cp -fP "$SSLDIR"/libssl.so* "$LIBDIR"/ && \
+    cp -fP "$SSLDIR"/libcrypto.so* "$LIBDIR"/ && \
     ldconfig && \
     # Sanity check
     echo "Installed libssl/libcrypto in $LIBDIR:" && \
@@ -78,9 +85,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set OpenSSL environment
+# Set OpenSSL environment.
+# Note: OpenSSL .so files are discoverable via /etc/ld.so.conf.d/openssl-3.6.1.conf
+# (set up earlier with the runtime-detected libdir), so we don't need to put
+# /opt/app/openssl-3.6.1/{lib,lib64} on LD_LIBRARY_PATH — and including it would
+# be wrong anyway, because Configure picks lib vs lib64 per platform.
 ENV PATH="/opt/app/openssl-3.6.1/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/app/openssl-3.6.1/lib:/opt/ffmpeg-master-latest-linux64-gpl-shared/lib:/opt/onnxruntime-linux-x64-1.14.0/lib"
 ENV OPENSSL_DIR="/opt/app/openssl-3.6.1"
 
 # ============================================================
