@@ -42,9 +42,16 @@ RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
     cd openssl-${OPENSSL_VERSION} && \
     # Note: OpenSSL Configure defaults libdir per platform
     #   linux-aarch64 -> lib
-    #   linux-x86_64  -> lib64  (passes our 'libdir=lib' silently)
-    # Pass the target platform explicitly + --libdir=lib to force lib/ on amd64.
-    ./Configure linux-${TARGETARCH} --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 --libdir=lib shared && \
+    #   linux-x86_64  -> lib64  (silently ignores bare 'libdir=lib')
+    # Map Docker TARGETARCH (amd64/arm64) to OpenSSL's platform identifiers
+    # (linux-x86_64 / linux-aarch64), and pass --libdir=lib so Configure
+    # installs .so files into lib/ on both arches.
+    if [ "$TARGETARCH" = "arm64" ]; then \
+      OPENSSL_TARGET=linux-aarch64; \
+    else \
+      OPENSSL_TARGET=linux-x86_64; \
+    fi && \
+    ./Configure "$OPENSSL_TARGET" --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 --libdir=lib shared && \
     make -j$(nproc) && \
     make install && \
     cd .. && rm -rf openssl-${OPENSSL_VERSION}*
