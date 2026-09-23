@@ -76,7 +76,7 @@ docker pull ghcr.io/dio-del/funasr-wss:amd64-latest
 
 ## 改成本地固定 tag（防止 latest 漂移）
 ```bash
-docker tag ghcr.io/dio-del/funasr-wss:amd64-latest funasr-amd64-20260922-djh:latest
+docker tag ghcr.io/dio-del/funasr-wss:amd64-latest funasr-amd64-20260923-djh:latest
 ```
 
 ## 删除远程 tag（保留本地改名后的）
@@ -90,7 +90,7 @@ docker run -d \
     -p 10095:10095 \
     --name funasr-wss-amd64 \
     -v /mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/models:/home/funasr/models \
-    funasr-amd64-20260922-djh:latest \
+    funasr-amd64-20260923-djh:latest \
     /workspace/funasr-wss-server-2pass \
     --download-model-dir /home/funasr/models \
     --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx \
@@ -117,9 +117,9 @@ docker stop funasr-wss-amd64
 docker rm funasr-wss-amd64
 ```
 
-## 打包tar包
+## 打包tar.gz包
 ```bash
-docker save -o funasr-websocket-server.tar funasr-websocket-server:latest
+docker save funasr-amd64-20260923-djh:latest | gzip > funasr-amd64-20260923-djh.tar.gz
 ```
 
 ---
@@ -136,7 +136,7 @@ docker pull ghcr.io/dio-del/funasr-wss:arm64-latest
 
 ## 改成本地固定 tag（防止 latest 漂移）
 ```bash
-docker tag ghcr.io/dio-del/funasr-wss:arm64-latest funasr-arm64-20260922-djh:latest
+docker tag ghcr.io/dio-del/funasr-wss:arm64-latest funasr-arm64-20260923-djh:latest
 ```
 
 ## 删除远程 tag（保留本地改名后的）
@@ -151,7 +151,7 @@ docker run -d \
     -p 10095:10095 \
     --name funasr-wss-arm64 \
     -v /mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/models:/home/funasr/models \
-    funasr-arm64-20260922-djh:latest \
+    funasr-arm64-20260923-djh:latest \
     /workspace/funasr-wss-server-2pass \
     --download-model-dir /home/funasr/models \
     --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx \
@@ -176,4 +176,8 @@ docker stop funasr-wss-arm64
 ## 删除容器
 ```bash
 docker rm funasr-wss-arm64
+```
+## 打包tar.gz包
+```bash
+docker save funasr-arm64-20260923-djh:latest | gzip > funasr-arm64-20260923-djh.tar.gz
 ```

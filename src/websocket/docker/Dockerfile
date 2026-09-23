@@ -84,46 +84,39 @@ RUN SSLDIR=$(ls -d /opt/app/openssl-3.6.1/lib /opt/app/openssl-3.6.1/lib64 2>/de
     /opt/app/openssl-3.6.1/bin/openssl version -a
 
 # ============================================================
-# Install runtime dependencies (without default libssl-dev)
+# Install runtime dependencies (without default libssl-dev),
+# then re-copy compiled OpenSSL 3.6.1 .so files into the system lib
+# dir in case apt extracted an older libssl3t64 over our files.
+# This prevents:
+#   - Image scanners reporting the base image's EOL libssl3t64
+#   - The dynamic linker accidentally loading the older .so
 # ============================================================
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas-dev \
     libasound2t64 \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# ============================================================
-# Replace the base image's old OpenSSL 3.0.x .so files with our
-# compiled 3.6.1 versions in /usr/lib/<arch>-linux-gnu/. This prevents
-# both:
-#   - Image scanners reporting the base image's EOL libssl3t64 3.0.13
-#   - The dynamic linker accidentally loading the old .so
-# We already did the cp -fP above; this is a defensive re-copy after
-# apt installed any new packages that might have re-extracted the old
-# .so from a deb cache.
-# ============================================================
-ARG TARGETARCH
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      LIBDIR=/usr/lib/aarch64-linux-gnu; \
-    else \
-      LIBDIR=/usr/lib/x86_64-linux-gnu; \
-    fi && \
-    # Re-copy compiled 3.6.1 .so files (overwriting anything apt put back)
-    cp -fP /opt/app/openssl-3.6.1/lib/libssl.so* "$LIBDIR"/ && \
-    cp -fP /opt/app/openssl-3.6.1/lib/libcrypto.so* "$LIBDIR"/ && \
-    ldconfig && \
-    # Update ca-certificates to match our compiled OpenSSL
-    cp -r /opt/app/openssl-3.6.1/certs/* /etc/ssl/certs/ 2>/dev/null || true && \
-    echo "Final OpenSSL runtime check:" && \
-    ls -la "$LIBDIR"/libssl.so* "$LIBDIR"/libcrypto.so* && \
-    /opt/app/openssl-3.6.1/bin/openssl version -a
+    && rm -rf /var/lib/apt/lists/* \
+    && if [ "$TARGETARCH" = "arm64" ]; then \
+         LIBDIR=/usr/lib/aarch64-linux-gnu; \
+       else \
+         LIBDIR=/usr/lib/x86_64-linux-gnu; \
+       fi \
+    && cp -fP /opt/app/openssl-3.6.1/lib/libssl.so* "$LIBDIR"/ \
+    && cp -fP /opt/app/openssl-3.6.1/lib/libcrypto.so* "$LIBDIR"/ \
+    && ldconfig \
+    && cp -r /opt/app/openssl-3.6.1/certs/* /etc/ssl/certs/ 2>/dev/null || true \
+    && echo "Final OpenSSL runtime check:" \
+    && ls -la "$LIBDIR"/libssl.so* "$LIBDIR"/libcrypto.so* \
+    && /opt/app/openssl-3.6.1/bin/openssl version -a
 
 # Set OpenSSL environment.
 # Note: OpenSSL .so files are discoverable via /etc/ld.so.conf.d/openssl-3.6.1.conf
 # (set up earlier with the runtime-detected libdir), so we don't need to put
 # /opt/app/openssl-3.6.1/{lib,lib64} on LD_LIBRARY_PATH — and including it would
 # be wrong anyway, because Configure picks lib vs lib64 per platform.
-ENV PATH="/opt/app/openssl-3.6.1/bin:${PATH}"
+# OPENSSL_DIR is kept in its own env. The main PATH/LD_LIBRARY_PATH block is
+# set once below to avoid overriding earlier env accidentally.
 ENV OPENSSL_DIR="/opt/app/openssl-3.6.1"
 
 # ============================================================
@@ -142,9 +135,10 @@ COPY ffmpeg-${TARGETARCH} /opt/ffmpeg
 COPY funasr-build /opt/funasr-build
 
 # ============================================================
-# Environment
+# Environment (PATH includes ffmpeg + openssl bins; openssl also
+# exposed via /usr/bin/openssl symlink so PATH coverage is belt-and-braces).
 # ============================================================
-ENV PATH="/opt/ffmpeg/bin:/opt/onnxruntime/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/opt/ffmpeg/bin:/opt/app/openssl-3.6.1/bin:/opt/onnxruntime/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/onnxruntime/lib:/opt/funasr-build"
 
 # ============================================================
