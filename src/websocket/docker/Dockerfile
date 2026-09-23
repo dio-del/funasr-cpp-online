@@ -1,7 +1,7 @@
 # FunASR C++ WebSocket Server Docker Image
 # Packages locally-built binary — no compilation inside Docker
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 LABEL maintainer="FunASR"
 LABEL description="FunASR C++ WebSocket Server (2pass mode)"
@@ -9,17 +9,17 @@ WORKDIR /workspace
 
 # ============================================================
 # Use Ubuntu ports mirror for arm64, aliyun for amd64.
-# aliyun's noble repo is missing some arm64 package indexes.
+# aliyun's resolute repo is missing some arm64 package indexes.
 # ============================================================
 ARG TARGETARCH
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      echo 'deb http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse' > /etc/apt/sources.list && \
-      echo 'deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
-      echo 'deb http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse' >> /etc/apt/sources.list; \
+      echo 'deb http://ports.ubuntu.com/ubuntu-ports resolute main restricted universe multiverse' > /etc/apt/sources.list && \
+      echo 'deb http://ports.ubuntu.com/ubuntu-ports resolute-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
+      echo 'deb http://ports.ubuntu.com/ubuntu-ports resolute-security main restricted universe multiverse' >> /etc/apt/sources.list; \
     else \
-      echo 'deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse' > /etc/apt/sources.list && \
-      echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
-      echo 'deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse' >> /etc/apt/sources.list; \
+      echo 'deb http://mirrors.aliyun.com/ubuntu/ resolute main restricted universe multiverse' > /etc/apt/sources.list && \
+      echo 'deb http://mirrors.aliyun.com/ubuntu/ resolute-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
+      echo 'deb http://mirrors.aliyun.com/ubuntu/ resolute-security main restricted universe multiverse' >> /etc/apt/sources.list; \
     fi
 
 # ============================================================
@@ -91,6 +91,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2t64 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# ============================================================
+# Replace the base image's old OpenSSL 3.0.x .so files with our
+# compiled 3.6.1 versions in /usr/lib/<arch>-linux-gnu/. This prevents
+# both:
+#   - Image scanners reporting the base image's EOL libssl3t64 3.0.13
+#   - The dynamic linker accidentally loading the old .so
+# We already did the cp -fP above; this is a defensive re-copy after
+# apt installed any new packages that might have re-extracted the old
+# .so from a deb cache.
+# ============================================================
+ARG TARGETARCH
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      LIBDIR=/usr/lib/aarch64-linux-gnu; \
+    else \
+      LIBDIR=/usr/lib/x86_64-linux-gnu; \
+    fi && \
+    # Re-copy compiled 3.6.1 .so files (overwriting anything apt put back)
+    cp -fP /opt/app/openssl-3.6.1/lib/libssl.so* "$LIBDIR"/ && \
+    cp -fP /opt/app/openssl-3.6.1/lib/libcrypto.so* "$LIBDIR"/ && \
+    ldconfig && \
+    # Update ca-certificates to match our compiled OpenSSL
+    cp -r /opt/app/openssl-3.6.1/certs/* /etc/ssl/certs/ 2>/dev/null || true && \
+    echo "Final OpenSSL runtime check:" && \
+    ls -la "$LIBDIR"/libssl.so* "$LIBDIR"/libcrypto.so* && \
+    /opt/app/openssl-3.6.1/bin/openssl version -a
 
 # Set OpenSSL environment.
 # Note: OpenSSL .so files are discoverable via /etc/ld.so.conf.d/openssl-3.6.1.conf
