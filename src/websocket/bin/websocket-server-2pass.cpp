@@ -17,6 +17,7 @@
 #include <vector>
 #include <iostream>
 #include <chrono>
+#include <websocketpp/base64/base64.hpp>  // 改:用现成的 websocketpp::base64_decode
 
 extern std::unordered_map<std::string, int> hws_map_;
 extern int fst_inc_wts_;
@@ -27,6 +28,8 @@ int64_t getCurrentTimeMillis() {
     auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     return millis;
 }
+
+// 新增(已删除,改用现成的 websocketpp::base64_decode)
 
 context_ptr WebSocketServer::on_tls_init(tls_mode mode,
                                          websocketpp::connection_hdl hdl,
@@ -79,7 +82,7 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
   const char* online_result = FunASRGetResult(result, 0);
   if (online_result != nullptr && online_result[0] != '\0') {
     std::string tmp_online_msg = online_result;
-    LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | index: " << data_msg->index << " | online_res :" << tmp_online_msg;
+    LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | online_index: " << data_msg->msg["online_index"].get<int>() << " | online_res :" << tmp_online_msg;
     jsonresult["text"] = tmp_online_msg;
     jsonresult["mode"] = "2pass-online";
     jsonresult["slice_type"] = 1;
@@ -100,7 +103,7 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
     const char* tpass_result = FunASRGetTpassResult(result, 0);
     if (tpass_result != nullptr && tpass_result[0] != '\0') {
       std::string tmp_tpass_msg = tpass_result;
-      LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | index: " << data_msg->index <<" | offline results : " << tmp_tpass_msg;
+      LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | online_index: " << data_msg->msg["online_index"].get<int>() << " | offline_text :" << tmp_tpass_msg;
       jsonresult["text"] = tmp_tpass_msg;
       jsonresult["mode"] = "2pass-offline";
 
@@ -304,6 +307,7 @@ void WebSocketServer::on_open(websocketpp::connection_hdl hdl) {
     data_msg->msg["is_eof"]=false; // if this connection is closed
     data_msg->msg["svs_lang"]="auto";
     data_msg->msg["svs_itn"]=true;
+    data_msg->msg["online_index"]=0; // 新增:客户端 JSON 帧序号
     FUNASR_DEC_HANDLE decoder_handle =
       FunASRWfstDecoderInit(tpass_handle, ASR_TWO_PASS, global_beam_, lattice_beam_, am_scale_);
     data_msg->decoder_handle = decoder_handle;
@@ -538,6 +542,76 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
       }
       if (jsonresult.contains("svs_itn")) {
         msg_data->msg["svs_itn"] = jsonresult["svs_itn"];
+      }
+      // 新增:记录客户端 JSON 序号
+      if (jsonresult.contains("online_index")) {
+        msg_data->msg["online_index"] = jsonresult["online_index"];
+      }
+      // 新增:仅 online 模式,从 JSON 读 base64 音频字节,解码后追加到缓冲区
+      bool online_audio_received = false;
+      if (msg_data->msg["mode"] == "online" &&
+          jsonresult.contains("origin_bytes") &&
+          !jsonresult["origin_bytes"].is_null()) {
+        try {
+          std::string b64 = jsonresult["origin_bytes"].get<std::string>();
+          std::string raw = websocketpp::base64_decode(b64);
+          const char* pcm_data = raw.data();
+          int32_t num_samples = static_cast<int32_t>(raw.size());
+          if (isonline && sample_data_p) {
+            sample_data_p->insert(sample_data_p->end(), pcm_data,
+                                  pcm_data + num_samples);
+            int setpsize = 800 * 2;
+            if (sample_data_p->size() > setpsize) {
+              int chunksize = floor(sample_data_p->size() / setpsize);
+              std::vector<char> subvector = {
+                  sample_data_p->begin(),
+                  sample_data_p->begin() + chunksize * setpsize};
+              sample_data_p->erase(sample_data_p->begin(),
+                                   sample_data_p->begin() + chunksize * setpsize);
+              if (msg_data->msg["is_eof"] != true &&
+                  msg_data->hotwords_embedding != nullptr) {
+                std::vector<std::vector<float>> hotwords_embedding_(
+                    *(msg_data->hotwords_embedding));
+                msg_data->strand_->post(std::bind(
+                    &WebSocketServer::do_decoder, this, data_map,
+                    std::move(subvector), std::move(hdl),
+                    std::ref(msg_data->msg), std::ref(*(punc_cache_p.get())),
+                    std::move(hotwords_embedding_),
+                    std::ref(*thread_lock_p), std::move(false),
+                    msg_data->msg["wav_name"], msg_data->msg["mode"],
+                    msg_data->msg["itn"], msg_data->msg["audio_fs"],
+                    msg_data->msg["wav_format"],
+                    std::ref(msg_data->tpass_online_handle),
+                    std::ref(msg_data->decoder_handle),
+                    msg_data->msg["svs_lang"], msg_data->msg["svs_itn"]));
+                msg_data->msg["access_num"] =
+                    (int)(msg_data->msg["access_num"]) + 1;
+              }
+            }
+          } else if (sample_data_p) {
+            sample_data_p->insert(sample_data_p->end(), pcm_data,
+                                  pcm_data + num_samples);
+          }
+        } catch (std::exception const& e) {
+          LOG(ERROR) << "origin_bytes parse error: " << e.what();
+        }
+        online_audio_received = true;
+      }
+      // 新增(仅 online):同步回传 ack,带上 online_index
+      if (online_audio_received && msg_data->msg["mode"] == "online") {
+        nlohmann::json ack;
+        ack["online_index"] = msg_data->msg["online_index"];
+        ack["wav_name"] = msg_data->msg["wav_name"];
+        ack["is_final"] = false;
+        ack["mode"] = "online";
+        websocketpp::lib::error_code ec;
+        if (is_ssl) {
+          wss_server_->send(hdl, ack.dump(),
+                            websocketpp::frame::opcode::text, ec);
+        } else {
+          server_->send(hdl, ack.dump(),
+                        websocketpp::frame::opcode::text, ec);
+        }
       }
       LOG(INFO) << "jsonresult=" << jsonresult
                 << ", msg_data->msg=" << msg_data->msg;

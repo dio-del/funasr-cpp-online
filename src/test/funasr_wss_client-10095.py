@@ -275,6 +275,7 @@ async def record_from_scp(chunk_begin, chunk_size):
         latency_last_audio_time[wav_name] = None
         latency_first_text_printed[wav_name] = False
 
+        import base64
         for i in range(chunk_num):
             beg = i * stride
             data = audio_bytes[beg: beg + stride]
@@ -284,11 +285,25 @@ async def record_from_scp(chunk_begin, chunk_size):
                 latency_first_audio_time[wav_name] = now_ts
             latency_last_audio_time[wav_name] = now_ts
 
-            await websocket.send(data)
+            # ✅ 改:把 PCM 用 base64 编码,塞进 JSON text 帧;并带 online_index
+            b64 = base64.b64encode(data).decode("ascii")
+            chunk_msg = {
+                "online_index": i + 1,
+                "origin_bytes": b64,
+            }
+            await websocket.send(json.dumps(chunk_msg, ensure_ascii=False))
 
             if i == chunk_num - 1:
                 is_speaking = False
-                await websocket.send(json.dumps({"is_speaking": is_speaking}, ensure_ascii=False))
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "online_index": chunk_num + 1,
+                            "is_speaking": is_speaking,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
 
             # ✅ sleep策略：默认按实时节奏；若开启 send_without_sleep 则几乎不 sleep（压测）
             if args.send_without_sleep:
@@ -340,6 +355,32 @@ async def message(id, writer: MeetingWriter):
             wav_name = meg.get("wav_name", "demo")
             text = meg.get("text", "")
             mode = meg.get("mode", "")
+            spk_name = meg.get("spk_name", "")
+            spk_score = meg.get("spk_score", None)
+
+            # ✅ 新增:ACK 包处理(服务端收到 origin_bytes 后立即回的同步回执)
+            # 特征: mode="online" + is_final=false + text 为空/没有识别结果
+            if meg.get("mode") == "online" and meg.get("is_final") is False:
+                online_index = meg.get("online_index", None)
+                if online_index is not None and not text:
+                    # 纯 ACK,只打印不落 events
+                    if not multi_mode:
+                        print(f"[ACK] wav={wav_name}, online_index={online_index}")
+                    # 可选:把这个 ACK 写进 events.jsonl,便于排查丢包
+                    if writer is not None:
+                        writer.write_event({
+                            "ts": _iso(time.time()),
+                            "recv_ts": time.time(),
+                            "meeting_id": str(id),
+                            "wav_name": wav_name,
+                            "mode": "online",
+                            "is_final": False,
+                            "is_ack": True,
+                            "text": "",
+                            "online_index": online_index,
+                        })
+                    continue
+
             spk_name = meg.get("spk_name", "")
             spk_score = meg.get("spk_score", None)
             now_ts = time.time()
@@ -394,6 +435,7 @@ async def message(id, writer: MeetingWriter):
                 "server_timestamp": meg.get("timestamp", None),
                 "sentence_info": meg.get("sentence_info", None),
                 "punc_array": meg.get("punc_array", None),
+                "online_index": meg.get("online_index", None),  # ✅ 新增:客户端序号
             }
             if writer is not None:
                 writer.write_event(event)

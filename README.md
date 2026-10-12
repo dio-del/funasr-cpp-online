@@ -131,7 +131,7 @@ docker save funasr-amd64-20260923-djh:latest | gzip > funasr-amd64-20260923-djh.
 
 ## 拉取镜像
 ```bash
-docker pull ghcr.io/dio-del/funasr-wss:arm64-latest
+docker pull ghcr.io/dio-del/funasr-wss:arm64-latest --platform linux/arm64
 ```
 
 ## 改成本地固定 tag（防止 latest 漂移）
