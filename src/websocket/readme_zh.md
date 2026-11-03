@@ -32,7 +32,7 @@ apt-get install libssl-dev #ubuntu
 ```shell
 git clone https://github.com/modelscope/FunASR.git && cd FunASR/runtime/websocket
 mkdir build && cd build
-cmake  cmake  -DCMAKE_BUILD_TYPE=release .. -DONNXRUNTIME_DIR=/mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/src/websocket/docker/onnxruntime-linux-x64-1.14.0 -DFFMPEG_DIR=/mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/src/websocket/docker/ffmpeg-master-latest-linux64-gpl-shared
+cmake -DCMAKE_BUILD_TYPE=release .. -DONNXRUNTIME_DIR=/mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/onnxruntime-linux-x64-1.14.0 -DFFMPEG_DIR=/mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/ffmpeg-master-latest-linux64-gpl-shared
 make -j 4
 ```
 
