@@ -20,10 +20,12 @@
 #include "portaudio.h" 
 
 #include <atomic>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <thread>
+#include <vector>
 #include <websocketpp/client.hpp>
 #include <websocketpp/common/thread.hpp>
 #include <websocketpp/config/asio_client.hpp>
@@ -43,6 +45,17 @@ void WaitABit() {
   usleep(500);
 #endif
 }
+
+// 二进制帧序号头: 4 字节大端 uint32, 服务端剥掉后在回包里原样带回
+static const size_t kSeqHeaderSize = 4;
+
+static void AppendSeqHeader(std::vector<char>& frame, uint32_t online_seq) {
+  frame.push_back(static_cast<char>((online_seq >> 24) & 0xFF));
+  frame.push_back(static_cast<char>((online_seq >> 16) & 0xFF));
+  frame.push_back(static_cast<char>((online_seq >> 8) & 0xFF));
+  frame.push_back(static_cast<char>(online_seq & 0xFF));
+}
+
 std::atomic<int> wav_index(0);
 
 typedef websocketpp::config::asio_client::message_type::ptr message_ptr;
@@ -124,7 +137,7 @@ class WebsocketClient {
   void run(const std::string& uri, const std::vector<string>& wav_list,
            const std::vector<string>& wav_ids, int audio_fs, std::string asr_mode,
            std::vector<int> chunk_size, const std::unordered_map<std::string, int>& hws_map,
-           bool is_record=false, int use_itn=1, int svs_itn=1) {
+           bool is_record=false, int use_itn=1, int svs_itn=1, int seq_header=1) {
     // Create a new connection to the given URI
     websocketpp::lib::error_code ec;
     typename websocketpp::client<T>::connection_ptr con =
@@ -146,9 +159,9 @@ class WebsocketClient {
     websocketpp::lib::thread asio_thread(&websocketpp::client<T>::run,
                                          &m_client);
     if(is_record){
-      send_rec_data(asr_mode, chunk_size, hws_map, use_itn, svs_itn);
+      send_rec_data(asr_mode, chunk_size, hws_map, use_itn, svs_itn, seq_header);
     }else{
-      send_wav_data(wav_list[0], wav_ids[0], audio_fs, asr_mode, chunk_size, hws_map, use_itn, svs_itn);
+      send_wav_data(wav_list[0], wav_ids[0], audio_fs, asr_mode, chunk_size, hws_map, use_itn, svs_itn, seq_header);
     }
 
     WaitABit();
@@ -185,7 +198,7 @@ class WebsocketClient {
   // send wav to server
   void send_wav_data(string wav_path, string wav_id, int audio_fs, std::string asr_mode,
                      std::vector<int> chunk_vector, const std::unordered_map<std::string, int>& hws_map,
-                     int use_itn, int svs_itn) {
+                     int use_itn, int svs_itn, int seq_header) {
     uint64_t count = 0;
     std::stringstream val;
 
@@ -242,6 +255,7 @@ class WebsocketClient {
     jsonbegin["is_speaking"] = true;
     jsonbegin["itn"] = true;
     jsonbegin["svs_itn"] = true;
+    jsonbegin["seq_header"] = (seq_header == 1);
     if(use_itn == 0){
       jsonbegin["itn"] = false;
     }
@@ -271,6 +285,7 @@ class WebsocketClient {
         // send data to server
         int offset = 0;
         int block_size = 102400;
+        uint32_t online_seq = 0;
         while (offset < len) {
           int send_block = 0;
           if (offset + block_size <= len) {
@@ -278,8 +293,20 @@ class WebsocketClient {
           } else {
             send_block = len - offset;
           }
-          m_client.send(m_hdl, iArray + offset, send_block * sizeof(short),
-                websocketpp::frame::opcode::binary, ec);
+          online_seq++;
+          if (seq_header == 1) {
+            // 二进制帧前置4字节大端序号头, 服务端剥掉后原样回带
+            std::vector<char> frame;
+            frame.reserve(kSeqHeaderSize + send_block * sizeof(short));
+            AppendSeqHeader(frame, online_seq);
+            const char* pcm = reinterpret_cast<const char*>(iArray + offset);
+            frame.insert(frame.end(), pcm, pcm + send_block * sizeof(short));
+            m_client.send(m_hdl, frame.data(), frame.size(),
+                  websocketpp::frame::opcode::binary, ec);
+          } else {
+            m_client.send(m_hdl, iArray + offset, send_block * sizeof(short),
+                  websocketpp::frame::opcode::binary, ec);
+          }
           offset += send_block;
         }
 
@@ -338,8 +365,8 @@ class WebsocketClient {
       return paContinue;
   }
 
-  void send_rec_data(std::string asr_mode, std::vector<int> chunk_vector, 
-                     const std::unordered_map<std::string, int>& hws_map, int use_itn, int svs_itn) {
+  void send_rec_data(std::string asr_mode, std::vector<int> chunk_vector,
+                     const std::unordered_map<std::string, int>& hws_map, int use_itn, int svs_itn, int seq_header) {
     // first message
     bool wait = false;
     while (1) {
@@ -379,6 +406,7 @@ class WebsocketClient {
     jsonbegin["is_speaking"] = true;
     jsonbegin["itn"] = true;
     jsonbegin["svs_itn"] = true;
+    jsonbegin["seq_header"] = (seq_header == 1);
     if(use_itn == 0){
       jsonbegin["itn"] = false;
     }
@@ -442,6 +470,7 @@ class WebsocketClient {
       exit(EXIT_FAILURE);
     }
 
+    uint32_t online_seq = 0;
     while(true){
       int len = buffer.size();
       short* iArray = new short[len];
@@ -449,8 +478,20 @@ class WebsocketClient {
         iArray[i] = (short)(buffer[i] * 32768);
       }
 
-      m_client.send(m_hdl, iArray, len * sizeof(short),
-                    websocketpp::frame::opcode::binary, ec);
+      online_seq++;
+      if (seq_header == 1) {
+        // 二进制帧前置4字节大端序号头, 服务端剥掉后原样回带
+        std::vector<char> frame;
+        frame.reserve(kSeqHeaderSize + len * sizeof(short));
+        AppendSeqHeader(frame, online_seq);
+        const char* pcm = reinterpret_cast<const char*>(iArray);
+        frame.insert(frame.end(), pcm, pcm + len * sizeof(short));
+        m_client.send(m_hdl, frame.data(), frame.size(),
+                      websocketpp::frame::opcode::binary, ec);
+      } else {
+        m_client.send(m_hdl, iArray, len * sizeof(short),
+                      websocketpp::frame::opcode::binary, ec);
+      }
       buffer.clear();
 
       if (ec) {
@@ -526,6 +567,10 @@ int main(int argc, char* argv[]) {
       "svs-itn is 1 means use itn and punc, 0 means not use", false, 1, "int");
   TCLAP::ValueArg<std::string> hotword_("", HOTWORD,
       "the hotword file, one hotword perline, Format: Hotword Weight (could be: 阿里巴巴 20)", false, "", "string");
+  TCLAP::ValueArg<int> seq_header_(
+      "", "seq-header",
+      "seq-header is 1 means every binary frame starts with a 4-byte big-endian seq", false, 1,
+      "int");
 
   cmd.add(server_ip_);
   cmd.add(port_);
@@ -539,6 +584,7 @@ int main(int argc, char* argv[]) {
   cmd.add(use_itn_);
   cmd.add(svs_itn_);
   cmd.add(hotword_);
+  cmd.add(seq_header_);
   cmd.parse(argc, argv);
 
   std::string server_ip = server_ip_.getValue();
@@ -548,6 +594,7 @@ int main(int argc, char* argv[]) {
   std::string chunk_size_str = chunk_size_.getValue();
   int use_itn = use_itn_.getValue();
   int svs_itn = svs_itn_.getValue();
+  int seq_header = seq_header_.getValue();
   // get chunk_size
   std::vector<int> chunk_size;
   std::stringstream ss(chunk_size_str);
@@ -590,11 +637,11 @@ int main(int argc, char* argv[]) {
 
         c.m_client.set_tls_init_handler(bind(&OnTlsInit, ::_1));
 
-        c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, true, use_itn, svs_itn);
+        c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, true, use_itn, svs_itn, seq_header);
       } else {
         WebsocketClient<websocketpp::config::asio_client> c(is_ssl);
 
-        c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, true, use_itn, svs_itn);
+        c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, true, use_itn, svs_itn, seq_header);
       }
 
   }else{
@@ -635,17 +682,17 @@ int main(int argc, char* argv[]) {
         tmp_wav_ids.emplace_back(wav_ids[wav_i + i]);
 
         client_threads.emplace_back(
-            [uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, is_ssl, hws_map, use_itn, svs_itn]() {
+            [uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, is_ssl, hws_map, use_itn, svs_itn, seq_header]() {
               if (is_ssl == 1) {
                 WebsocketClient<websocketpp::config::asio_tls_client> c(is_ssl);
 
                 c.m_client.set_tls_init_handler(bind(&OnTlsInit, ::_1));
 
-                c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, false, use_itn, svs_itn);
+                c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, false, use_itn, svs_itn, seq_header);
               } else {
                 WebsocketClient<websocketpp::config::asio_client> c(is_ssl);
 
-                c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, false, use_itn, svs_itn);
+                c.run(uri, tmp_wav_list, tmp_wav_ids, audio_fs, asr_mode, chunk_size, hws_map, false, use_itn, svs_itn, seq_header);
               }
             });
       }

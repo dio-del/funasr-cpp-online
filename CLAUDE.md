@@ -104,6 +104,7 @@ python3 src/test/funasr_wss_client-10095.py \
 
 - 在 Linux 下**必须显式传 `--audio_in`**（默认值是 Windows 路径 `.\asr_example.wav`）；不传则采集麦克风输入（需装 PyAudio）。
 - `--mode` 取值 `offline | online | 2pass`；`2pass` 会同时走在线和离线解码。
+- `--seq_header` 取值 `1`（默认，开）/ `0`（关）：是否给二进制帧前置 4 字节大端序号头。服务端回包的 `online_seq` 字段与之对应。
 - `--send_without_sleep` 不按实时节奏 sleep，用于压测。
 - 客户端会在 `--log_dir`（默认 `./asr_logs`）下按会议写入 `events.jsonl` + `meta.json`。
 - 测试音频：`src/test/asr_example.wav`（短）、`src/test/qifengle.wav`（约 10 MB）。
@@ -172,16 +173,21 @@ openssl-3.6.1.tar.gz
 
 **客户端 → 服务端**
 
-- *文本帧* = JSON 控制消息。可识别的字段：`wav_name`、`mode`、`wav_format`、`itn`、`audio_fs`、`chunk_size`、`hotwords`、`svs_lang`、`svs_itn`、`online_index`、`origin_bytes`、`is_speaking`、`is_finished`。
-- *二进制帧* = 原始 PCM 字节（经典路径）。
-- `mode: "online"` 还额外支持**把 base64 编码的 PCM 放进 JSON 文本帧**的 `origin_bytes` 字段，用 `online_index` 作为客户端帧序号。这是较新的纯 JSON 路径；服务端每收到一帧就会回一个带 `online_index`、`text` 为空的 JSON ACK 帧。
+- *文本帧* = JSON 控制消息。可识别的字段：`wav_name`、`mode`、`wav_format`、`itn`、`audio_fs`、`chunk_size`、`hotwords`、`svs_lang`、`svs_itn`、`seq_header`、`is_speaking`、`is_finished`。
+- *二进制帧* = 原始 PCM 字节。这是唯一的音频传输路径 —— 不支持把 base64 音频放进 JSON 文本帧。
 - `chunk_size` 必须是长度为 3 且 `chunk_size[1] != 0` 的数组（默认 `5,10,5`）；且只在首条消息时生效 —— 那时 `FunTpassOnlineInit` 才创建在线流。
+- **`seq_header`（实时帧序号）**：首条控制消息里带 `"seq_header": true` 表示该连接启用帧头。此后的每个二进制帧前面带 **4 字节大端 uint32 序号**：`[seq:4B][PCM]`。服务端剥掉帧头后再累积 PCM，并把**收到该段音频时的序号原样带回**下行 JSON 的 `online_seq` 字段。
+  - 不带 `seq_header` 的老客户端完全不受影响 —— 服务端不剥头、不回 `online_seq`，响应字节与改动前一致。
+  - 开关一旦开启就不再关闭：中途关闭会把帧头当成 PCM 污染音频。
+  - 帧头剥离必须在 PCM 累积**之前**做，否则头字节会混进 800×2 的切块边界里把识别搞坏。
 - `hotwords` 传的是**字符串**：能解析成 JSON 对象 → 当作 FST 热词映射表；否则 → 当作空格分隔的 NN 热词列表。两条路径永远都会执行，并与服务端的 `--hotword` 文件合并。
 - `is_speaking: false` 或 `is_finished: true` 表示一句话结束，剩余缓冲区会以 `is_final = true` flush。
 
 **服务端 → 客户端**（JSON 文本帧）
 
-字段：`text`、`mode`（`2pass-online` / `2pass-offline` / `online`）、`slice_type`（`0` = 句子开始，`1` = 识别中，`2` = 句子结束）、`index`（句子计数器，句末自增）、`timestamp`（毫秒）、`start_time` / `end_time`（仅离线结果带）、`stamp_sents`、`wav_name`、`is_final`。
+字段：`text`、`mode`（只有 `2pass-online` / `2pass-offline` 两个取值 —— 即便客户端请求的是 `mode: "online"`，服务端回帧的 `mode` 仍是 `2pass-online`）、`slice_type`（`0` = 句子开始，`1` = 识别中，`2` = 句子结束）、`index`（句子计数器，句末自增）、`online_seq`（实时帧序号，仅在客户端协商了 `seq_header` 时出现）、`timestamp`（毫秒）、`start_time` / `end_time`（仅离线结果带）、`stamp_sents`、`wav_name`、`is_final`。
+
+**`index` 和 `online_seq` 是两回事，别搞混**：`index` 是**句子**计数器（离线结果出来时 +1），`online_seq` 是**音频帧**序号（客户端发什么服务端就回什么）。两者互不影响。
 
 关键行为：
 

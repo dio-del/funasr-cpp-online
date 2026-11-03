@@ -6,6 +6,7 @@ import asyncio
 
 import argparse
 import json
+import struct
 import traceback
 from multiprocessing import Process
 
@@ -50,6 +51,12 @@ parser.add_argument("--output_dir", type=str, default=None, help="output_dir")
 parser.add_argument("--ssl", type=int, default=0, help="1 for ssl connect, 0 for no ssl")
 parser.add_argument("--use_itn", type=int, default=1, help="1 for using itn, 0 for not itn")
 parser.add_argument("--mode", type=str, default="online", help="offline, online, 2pass")
+parser.add_argument(
+    "--seq_header",
+    type=int,
+    default=1,
+    help="1 for 二进制帧前置4字节大端序号头(服务端回包带 online_seq 字段), 0 for 原始 PCM",
+)
 
 # ✅ 验收日志输出目录（每个 meeting 单独写，避免多进程抢文件）
 parser.add_argument("--log_dir", type=str, default="./asr_logs", help="验收日志输出目录")
@@ -175,12 +182,18 @@ async def record_microphone():
             "is_speaking": True,
             "hotwords": hotword_msg,
             "itn": use_itn,
+            "seq_header": args.seq_header == 1,
         },
         ensure_ascii=False,
     )
     await websocket.send(message)
+    online_seq = 0
     while True:
         data = stream.read(CHUNK)
+        online_seq += 1
+        if args.seq_header == 1:
+            # 二进制帧前置4字节大端序号头, 服务端剥掉后原样回带
+            data = struct.pack(">I", online_seq) + data
         await websocket.send(data)
         await asyncio.sleep(0.01)
 
@@ -263,12 +276,14 @@ async def record_from_scp(chunk_begin, chunk_size):
                 "is_speaking": True,
                 "hotwords": hotword_msg,
                 "itn": use_itn,
+                "seq_header": args.seq_header == 1,
             },
             ensure_ascii=False,
         )
 
         await websocket.send(message)
         is_speaking = True
+        online_seq = 0
 
         # 初始化该 wav 的统计状态
         latency_first_audio_time[wav_name] = None
@@ -278,6 +293,10 @@ async def record_from_scp(chunk_begin, chunk_size):
         for i in range(chunk_num):
             beg = i * stride
             data = audio_bytes[beg: beg + stride]
+            online_seq += 1
+            if args.seq_header == 1:
+                # 二进制帧前置4字节大端序号头, 服务端剥掉后原样回带
+                data = struct.pack(">I", online_seq) + data
 
             now_ts = time.time()
             if latency_first_audio_time[wav_name] is None:
@@ -385,6 +404,7 @@ async def message(id, writer: MeetingWriter):
                 "meeting_id": str(id),
                 "wav_name": wav_name,
                 "mode": mode,
+                "online_seq": meg.get("online_seq", None),
                 "is_final": bool(meg.get("is_final", False)),
                 "text": text,
                 "spk_name": spk_name,

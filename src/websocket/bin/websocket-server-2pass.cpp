@@ -22,6 +22,11 @@ extern std::unordered_map<std::string, int> hws_map_;
 extern int fst_inc_wts_;
 extern float global_beam_, lattice_beam_, am_scale_;
 
+// 客户端协商开启序号头(seq_header)后, 每个二进制帧前面带 4 字节大端 uint32 序号
+static const int kSeqHeaderSize = 4;
+// 传给解码链路的 online_seq 为该值时表示"未开启序号头", 下行 JSON 不带 online_seq 字段
+static const int64_t kSeqDisabled = -1;
+
 int64_t getCurrentTimeMillis() {
     auto now = std::chrono::system_clock::now();
     auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -65,7 +70,7 @@ context_ptr WebSocketServer::on_tls_init(tls_mode mode,
   return ctx;
 }
 
-nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& hdl, std::map<websocketpp::connection_hdl, std::shared_ptr<FUNASR_MESSAGE>,std::owner_less<websocketpp::connection_hdl>>& data_map, const std::string& modetype, bool is_final) {
+nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& hdl, std::map<websocketpp::connection_hdl, std::shared_ptr<FUNASR_MESSAGE>,std::owner_less<websocketpp::connection_hdl>>& data_map, const std::string& modetype, bool is_final, int64_t online_seq) {
   std::shared_ptr<FUNASR_MESSAGE> data_msg = nullptr;
   auto it = data_map.find(hdl);
   if (it != data_map.end()) {
@@ -139,6 +144,12 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
     }
   }
 
+  // 客户端协商开启序号头时, 把收到该段音频时的实时帧序号原样带回。
+  // 与上面的 index(句子计数器)无关, 两个字段互不干扰。
+  if (online_seq != kSeqDisabled) {
+    jsonresult["online_seq"] = online_seq;
+  }
+
   return jsonresult;
 }
 // feed buffer to asr engine for decoder
@@ -159,7 +170,8 @@ void WebSocketServer::do_decoder(
     FUNASR_HANDLE& tpass_online_handle,
     FUNASR_DEC_HANDLE& decoder_handle,
     std::string svs_lang,
-    bool sys_itn) {
+    bool sys_itn,
+    int64_t online_seq) {
   // lock for each connection
   if(!tpass_online_handle){
     scoped_lock guard(thread_lock);
@@ -204,7 +216,7 @@ void WebSocketServer::do_decoder(
       }
       if (Result) {
         websocketpp::lib::error_code ec;
-        nlohmann::json jsonresult = handle_result(Result, hdl, data_map, modetype, false);
+        nlohmann::json jsonresult = handle_result(Result, hdl, data_map, modetype, false, online_seq);
         jsonresult["wav_name"] = wav_name;
         jsonresult["is_final"] = false;
         if (jsonresult["text"] != "") {
@@ -247,7 +259,7 @@ void WebSocketServer::do_decoder(
       }
       if (Result) {
         websocketpp::lib::error_code ec;
-        nlohmann::json jsonresult = handle_result(Result, hdl, data_map, modetype, true);
+        nlohmann::json jsonresult = handle_result(Result, hdl, data_map, modetype, true, online_seq);
         jsonresult["wav_name"] = wav_name;
         jsonresult["is_final"] = true;
         //LOG(INFO) << "jsonresult: " << jsonresult.dump(4);
@@ -266,6 +278,9 @@ void WebSocketServer::do_decoder(
           jsonresult["text"] = "ERROR. Real-time transcription service ONLY SUPPORT PCM stream.";
           jsonresult["wav_name"] = wav_name;
           jsonresult["is_final"] = true;
+          if (online_seq != kSeqDisabled) {
+            jsonresult["online_seq"] = online_seq;
+          }
           if (is_ssl) {
             wss_server_->send(hdl, jsonresult.dump(),
                               websocketpp::frame::opcode::text, ec);
@@ -466,6 +481,22 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
         msg_data->msg["wav_format"] = jsonresult["wav_format"];
       }
 
+      // 序号头协商: 开启后每个二进制帧前面带 4 字节大端 uint32 实时帧序号。
+      // 一旦开启就不再关闭 —— 中途关闭会把帧头当成 PCM 污染音频。
+      if (!msg_data->use_seq_header && jsonresult.contains("seq_header")) {
+        const nlohmann::json& seq_header = jsonresult["seq_header"];
+        bool enable = false;
+        if (seq_header.is_boolean()) {
+          enable = seq_header.get<bool>();
+        } else if (seq_header.is_number()) {
+          enable = (seq_header.get<double>() != 0);
+        } else {
+          LOG(ERROR) << "invalid seq_header, expect boolean or number";
+        }
+        msg_data->use_seq_header = enable;
+        LOG(INFO) << "seq_header: " << enable;
+      }
+
       // hotwords: fst/nn
       if(msg_data->hotwords_embedding == nullptr){
         std::unordered_map<std::string, int> merged_hws_map;
@@ -549,8 +580,11 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
 
         // if it is in final message, post the sample_data to decode
         try{
-		  
+
           std::vector<std::vector<float>> hotwords_embedding_(*(msg_data->hotwords_embedding));
+          // 快照收到这段音频时的实时帧序号, 随解码任务一起带下去
+          int64_t online_seq_snapshot =
+              msg_data->use_seq_header ? msg_data->online_seq : kSeqDisabled;
           msg_data->strand_->post(
               std::bind(&WebSocketServer::do_decoder, this,
                         data_map,
@@ -566,7 +600,8 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
                         std::ref(msg_data->tpass_online_handle),
                         std::ref(msg_data->decoder_handle),
                         msg_data->msg["svs_lang"],
-                        msg_data->msg["svs_itn"]));
+                        msg_data->msg["svs_itn"],
+                        online_seq_snapshot));
 		      msg_data->msg["access_num"]=(int)(msg_data->msg["access_num"])+1;
         }
         catch (std::exception const &e)
@@ -580,6 +615,24 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
       // recived binary data
       const auto* pcm_data = static_cast<const char*>(payload.data());
       int32_t num_samples = payload.size();
+
+      // 序号头: 前 4 字节是大端 uint32 实时帧序号, 后面才是 PCM。
+      // 必须先剥掉再累积, 否则帧头会混进音频流导致识别错乱。
+      if (msg_data->use_seq_header) {
+        if (num_samples < kSeqHeaderSize) {
+          LOG(ERROR) << "binary frame is shorter than seq header, size="
+                     << num_samples << ", drop it";
+          break;
+        }
+        uint32_t online_seq = 0;
+        for (int i = 0; i < kSeqHeaderSize; i++) {
+          online_seq = (online_seq << 8) |
+                       static_cast<unsigned char>(pcm_data[i]);
+        }
+        msg_data->online_seq = static_cast<int64_t>(online_seq);
+        pcm_data += kSeqHeaderSize;
+        num_samples -= kSeqHeaderSize;
+      }
 
       if (isonline) {
         sample_data_p->insert(sample_data_p->end(), pcm_data,
@@ -601,6 +654,9 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
             // post to decode
             if (msg_data->msg["is_eof"] != true && msg_data->hotwords_embedding != nullptr) {
               std::vector<std::vector<float>> hotwords_embedding_(*(msg_data->hotwords_embedding));
+              // 快照收到这段音频时的实时帧序号, 随解码任务一起带下去
+              int64_t online_seq_snapshot =
+                  msg_data->use_seq_header ? msg_data->online_seq : kSeqDisabled;
               msg_data->strand_->post(
                         std::bind(&WebSocketServer::do_decoder, this,
                                   data_map,
@@ -617,7 +673,8 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
                                   std::ref(msg_data->tpass_online_handle),
                                   std::ref(msg_data->decoder_handle),
                                   msg_data->msg["svs_lang"],
-                                  msg_data->msg["svs_itn"]));
+                                  msg_data->msg["svs_itn"],
+                                  online_seq_snapshot));
               msg_data->msg["access_num"]=(int)(msg_data->msg["access_num"])+1;
             }
           }

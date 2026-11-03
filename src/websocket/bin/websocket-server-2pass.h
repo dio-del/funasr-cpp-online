@@ -68,6 +68,9 @@ typedef struct {
   int64_t end_time = 0;
   int64_t index = 0;
   int64_t timestamp = 0;
+
+  bool use_seq_header = false;  // 客户端协商开启二进制帧序号头
+  int64_t online_seq = 0;       // 最近收到的二进制帧序号(原始 uint32 值)
 } FUNASR_MESSAGE;
 
 // See https://wiki.mozilla.org/Security/Server_Side_TLS for more details about
@@ -135,7 +138,8 @@ class WebSocketServer {
                   FUNASR_HANDLE& tpass_online_handle,
                   FUNASR_DEC_HANDLE& decoder_handle,
                   std::string svs_lang,
-                  bool sys_itn);
+                  bool sys_itn,
+                  int64_t online_seq);
 
   void initAsr(std::map<std::string, std::string>& model_path, int thread_num);
   void on_message(websocketpp::connection_hdl hdl, message_ptr msg);
