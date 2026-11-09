@@ -84,7 +84,7 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
   const char* online_result = FunASRGetResult(result, 0);
   if (online_result != nullptr && online_result[0] != '\0') {
     std::string tmp_online_msg = online_result;
-    LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | index: " << data_msg->index << " | online_res :" << tmp_online_msg;
+    LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | index: " << data_msg->index << " | online_seq: " << online_seq << " | online_res :" << tmp_online_msg;
     jsonresult["text"] = tmp_online_msg;
     jsonresult["mode"] = "2pass-online";
     jsonresult["slice_type"] = 1;
@@ -105,7 +105,7 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
     const char* tpass_result = FunASRGetTpassResult(result, 0);
     if (tpass_result != nullptr && tpass_result[0] != '\0') {
       std::string tmp_tpass_msg = tpass_result;
-      LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | index: " << data_msg->index <<" | offline results : " << tmp_tpass_msg;
+      LOG(INFO) << "wav_name: " << data_msg->msg["wav_name"].get<std::string>() << " | index: " << data_msg->index <<" | online_seq: " << online_seq << " | offline results : " << tmp_tpass_msg;
       jsonresult["text"] = tmp_tpass_msg;
       jsonresult["mode"] = "2pass-offline";
 

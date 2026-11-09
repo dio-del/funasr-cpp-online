@@ -8,6 +8,7 @@
 ## 编译流程
 ```bash
 cd funasr-cpp-online/src/websocket
+rm -r build
 mkdir build
 cd build
 cmake  -DCMAKE_BUILD_TYPE=release .. -DONNXRUNTIME_DIR=/mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/onnxruntime-linux-x64-1.14.0 -DFFMPEG_DIR=/mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/ffmpeg-master-latest-linux64-gpl-shared
@@ -76,7 +77,7 @@ docker pull ghcr.io/dio-del/funasr-wss:amd64-latest
 
 ## 改成本地固定 tag（防止 latest 漂移）
 ```bash
-docker tag ghcr.io/dio-del/funasr-wss:amd64-latest funasr-amd64-20260923-djh:latest
+docker tag ghcr.io/dio-del/funasr-wss:amd64-latest funasr-amd64-20261103-djh:latest
 ```
 
 ## 删除远程 tag（保留本地改名后的）
@@ -90,7 +91,7 @@ docker run -d \
     -p 10095:10095 \
     --name funasr-wss-amd64 \
     -v /mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/models:/home/funasr/models \
-    funasr-amd64-20260923-djh:latest \
+    funasr-amd64-20261103-djh:latest \
     /workspace/funasr-wss-server-2pass \
     --download-model-dir /home/funasr/models \
     --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx \
