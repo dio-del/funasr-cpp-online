@@ -394,7 +394,10 @@ jobs:
 
           # gcc-N-base ships libgcc_s.so.1 and is a hard dependency of
           # libstdc++6 / libgcc-s1 — it contains no compiler and stays.
+          # dpkg prints Multi-Arch packages as "name:arch", so strip the
+          # architecture qualifier before matching.
           bad="$(awk '$1=="ii"{print $2}' /tmp/dpkg.txt \
+                 | sed 's/:[a-z0-9_.-]*$//' \
                  | grep -E '^(gcc|g\+\+|cpp|gfortran|binutils|make|build-essential|dpkg-dev|libc6-dev)' \
                  | grep -vE '^gcc-[0-9]+-base$' || true)"
           if [ -n "$bad" ]; then
