@@ -1,17 +1,24 @@
 # FunASR C++ WebSocket Server Docker Image
-# Packages locally-built binary — no compilation inside Docker
-
-FROM ubuntu:26.04
-
-LABEL maintainer="FunASR"
-LABEL description="FunASR C++ WebSocket Server (2pass mode)"
-WORKDIR /workspace
+#
+# Multi-stage build:
+#   base    -- apt mirror setup only
+#   builder -- compiles OpenSSL 3.6.1 (needs gcc/cpp/g++/make/perl)
+#   runtime -- final image: build artifacts + runtime deps, NO toolchain
+#
+# Why split: this used to be a single-stage build, so build-essential
+# stayed in the published image and image scanners reported gcc / cpp
+# as risk components (CVE-2020-11023). A runtime image never needs a
+# compiler; splitting the stages removes both components entirely.
 
 # ============================================================
-# Use Ubuntu ports mirror for arm64, aliyun for amd64.
+# base: apt mirrors (arm64 -> ports.ubuntu.com, amd64 -> aliyun).
 # aliyun's resolute repo is missing some arm64 package indexes.
 # ============================================================
+FROM ubuntu:26.04 AS base
+
 ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
       echo 'deb http://ports.ubuntu.com/ubuntu-ports resolute main restricted universe multiverse' > /etc/apt/sources.list && \
       echo 'deb http://ports.ubuntu.com/ubuntu-ports resolute-updates main restricted universe multiverse' >> /etc/apt/sources.list && \
@@ -23,29 +30,29 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     fi
 
 # ============================================================
-# Install build tools for compiling OpenSSL from source
+# Stage 1/2: builder -- compile OpenSSL 3.6.1.
+# perl runs the Configure script; build-essential brings gcc/cpp/g++/make/ar.
 # ============================================================
+FROM base AS builder
+
+ARG TARGETARCH
+ENV OPENSSL_VERSION=3.6.1
+WORKDIR /workspace
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    wget \
-    perl \
-    ca-certificates \
+      build-essential \
+      perl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# ============================================================
-# Compile and install OpenSSL 3.6.1 from source
-# ============================================================
-ENV OPENSSL_VERSION=3.6.1
 COPY openssl-3.6.1.tar.gz /workspace/openssl-3.6.1.tar.gz
 RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
     cd openssl-${OPENSSL_VERSION} && \
-    # Note: OpenSSL Configure defaults libdir per platform
+    # Configure's default libdir differs per platform
     #   linux-aarch64 -> lib
-    #   linux-x86_64  -> lib64  (silently ignores bare 'libdir=lib')
-    # Map Docker TARGETARCH (amd64/arm64) to OpenSSL's platform identifiers
-    # (linux-x86_64 / linux-aarch64), and pass --libdir=lib so Configure
-    # installs .so files into lib/ on both arches.
+    #   linux-x86_64  -> lib64
+    # so pass --libdir=lib to pin it, and map Docker TARGETARCH
+    # (amd64/arm64) to OpenSSL's platform identifiers.
     if [ "$TARGETARCH" = "arm64" ]; then \
       OPENSSL_TARGET=linux-aarch64; \
     else \
@@ -54,95 +61,79 @@ RUN tar -xzf openssl-${OPENSSL_VERSION}.tar.gz && \
     ./Configure "$OPENSSL_TARGET" --prefix=/opt/app/openssl-3.6.1 --openssldir=/opt/app/openssl-3.6.1 --libdir=lib shared && \
     make -j$(nproc) && \
     make install && \
-    cd .. && rm -rf openssl-${OPENSSL_VERSION}*
+    cd .. && rm -rf openssl-${OPENSSL_VERSION}* && \
+    # Assert Configure honoured --libdir=lib. If it ever lands in lib64/
+    # we fail here instead of silently shipping the distro's libssl3t64.
+    test -f /opt/app/openssl-3.6.1/lib/libssl.so.3 && \
+    test -f /opt/app/openssl-3.6.1/lib/libcrypto.so.3
 
-# Update library cache.
-# Detect actual lib dir (lib or lib64) for ld.so.conf and the system lib copy.
-# OpenSSL Configure picks per-platform defaults that may differ from --libdir.
-# TARGETARCH was already declared above; no need to redeclare.
-RUN SSLDIR=$(ls -d /opt/app/openssl-3.6.1/lib /opt/app/openssl-3.6.1/lib64 2>/dev/null | head -1) && \
-    echo "OpenSSL install libdir: $SSLDIR" && \
-    echo "$SSLDIR" > /etc/ld.so.conf.d/openssl-3.6.1.conf && \
-    ldconfig && \
-    rm -rf /usr/include/openssl && \
-    cp -r /opt/app/openssl-3.6.1/include/openssl /usr/include/ && \
-    ln -sf /opt/app/openssl-3.6.1/bin/openssl /usr/bin/openssl && \
+# ============================================================
+# Stage 2/2: runtime -- final image, no compiler toolchain.
+# ============================================================
+FROM base AS runtime
+
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
+
+# Runtime packages only (no compiler):
+#   libstdc++6     -> libstdc++.so.6  (binary + libonnxruntime.so)
+#   libgcc-s1      -> libgcc_s.so.1   (DT_NEEDED of libonnxruntime.so)
+#   libopenblas0   -> runtime lib only; the -dev package drags in the
+#                     gfortran compiler
+#   libasound2t64  -> local builds may enable portaudio (CI disables it)
+#   ca-certificates-> system CA trust store
+# NOTE: gcc-N-base arrives as a hard dependency of libstdc++6/libgcc-s1.
+# It ships libgcc_s.so.1 (runtime files only, no compiler) and cannot
+# be removed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libstdc++6 \
+      libgcc-s1 \
+      libopenblas0 \
+      libasound2t64 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenSSL 3.6.1: take only the compiled install tree from the builder.
+COPY --from=builder /opt/app/openssl-3.6.1 /opt/app/openssl-3.6.1
+
+# Install the 3.6.1 .so files into the system lib dir (apt may have
+# extracted an older libssl3t64 above), register them with ldconfig and
+# assert the copy actually took effect -- no silent fallback to the
+# distro libssl.
+RUN set -eu; \
     if [ "$TARGETARCH" = "arm64" ]; then \
       LIBDIR=/usr/lib/aarch64-linux-gnu; \
-      ARCHDIR=aarch64-linux-gnu; \
     else \
       LIBDIR=/usr/lib/x86_64-linux-gnu; \
-      ARCHDIR=x86_64-linux-gnu; \
-    fi && \
-    echo "Copying OpenSSL libs from $SSLDIR to $LIBDIR" && \
-    cp -fP "$SSLDIR"/libssl.so* "$LIBDIR"/ && \
-    cp -fP "$SSLDIR"/libcrypto.so* "$LIBDIR"/ && \
-    ldconfig && \
-    # Sanity check
-    echo "Installed libssl/libcrypto in $LIBDIR:" && \
-    ls -la "$LIBDIR"/libssl.so* "$LIBDIR"/libcrypto.so* && \
-    /opt/app/openssl-3.6.1/bin/openssl version -a
+    fi; \
+    SSLDIR=/opt/app/openssl-3.6.1/lib; \
+    echo "OpenSSL install libdir: $SSLDIR"; \
+    echo "$SSLDIR" > /etc/ld.so.conf.d/openssl-3.6.1.conf; \
+    cp -fP "$SSLDIR"/libssl.so* "$LIBDIR"/; \
+    cp -fP "$SSLDIR"/libcrypto.so* "$LIBDIR"/; \
+    ln -sf /opt/app/openssl-3.6.1/bin/openssl /usr/bin/openssl; \
+    ldconfig; \
+    cmp "$LIBDIR"/libssl.so.3 "$SSLDIR"/libssl.so.3; \
+    cmp "$LIBDIR"/libcrypto.so.3 "$SSLDIR"/libcrypto.so.3; \
+    /usr/bin/openssl version | grep -q "OpenSSL 3.6.1"; \
+    cp -r /opt/app/openssl-3.6.1/certs/* /etc/ssl/certs/ 2>/dev/null || true; \
+    /usr/bin/openssl version -a
 
-# ============================================================
-# Install runtime dependencies (without default libssl-dev),
-# then re-copy compiled OpenSSL 3.6.1 .so files into the system lib
-# dir in case apt extracted an older libssl3t64 over our files.
-# This prevents:
-#   - Image scanners reporting the base image's EOL libssl3t64
-#   - The dynamic linker accidentally loading the older .so
-# ============================================================
-ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libopenblas-dev \
-    libasound2t64 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && if [ "$TARGETARCH" = "arm64" ]; then \
-         LIBDIR=/usr/lib/aarch64-linux-gnu; \
-       else \
-         LIBDIR=/usr/lib/x86_64-linux-gnu; \
-       fi \
-    && cp -fP /opt/app/openssl-3.6.1/lib/libssl.so* "$LIBDIR"/ \
-    && cp -fP /opt/app/openssl-3.6.1/lib/libcrypto.so* "$LIBDIR"/ \
-    && ldconfig \
-    && cp -r /opt/app/openssl-3.6.1/certs/* /etc/ssl/certs/ 2>/dev/null || true \
-    && echo "Final OpenSSL runtime check:" \
-    && ls -la "$LIBDIR"/libssl.so* "$LIBDIR"/libcrypto.so* \
-    && /opt/app/openssl-3.6.1/bin/openssl version -a
-
-# Set OpenSSL environment.
-# Note: OpenSSL .so files are discoverable via /etc/ld.so.conf.d/openssl-3.6.1.conf
-# (set up earlier with the runtime-detected libdir), so we don't need to put
-# /opt/app/openssl-3.6.1/{lib,lib64} on LD_LIBRARY_PATH — and including it would
-# be wrong anyway, because Configure picks lib vs lib64 per platform.
-# OPENSSL_DIR is kept in its own env. The main PATH/LD_LIBRARY_PATH block is
-# set once below to avoid overriding earlier env accidentally.
 ENV OPENSSL_DIR="/opt/app/openssl-3.6.1"
 
 # ============================================================
-# Copy local ffmpeg and onnxruntime from build context
-# Multi-arch: use architecture-specific directory names
-#   onnxruntime-amd64 / onnxruntime-arm64
-#   ffmpeg-amd64 / ffmpeg-arm64
-# These must exist as links or directories in the build context.
+# Copy build artifacts (identical to the old single-stage Dockerfile)
 # ============================================================
 COPY onnxruntime-${TARGETARCH} /opt/onnxruntime
 COPY ffmpeg-${TARGETARCH} /opt/ffmpeg
-
-# ============================================================
-# Copy FunASR build output (libfunasr.so, glog, gflags, openfst, etc.)
-# ============================================================
 COPY funasr-build /opt/funasr-build
 
-# ============================================================
-# Environment (PATH includes ffmpeg + openssl bins; openssl also
-# exposed via /usr/bin/openssl symlink so PATH coverage is belt-and-braces).
-# ============================================================
+# PATH includes the ffmpeg + openssl bins; openssl is also exposed via
+# the /usr/bin/openssl symlink, so PATH coverage is belt-and-braces.
 ENV PATH="/opt/ffmpeg/bin:/opt/app/openssl-3.6.1/bin:/opt/onnxruntime/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/onnxruntime/lib:/opt/funasr-build"
 
-# ============================================================
-# Copy locally-built binary from build context
-# ============================================================
 COPY funasr-wss-server-2pass funasr-wss-server-2pass
 RUN chmod +x funasr-wss-server-2pass

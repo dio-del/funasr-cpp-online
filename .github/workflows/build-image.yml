@@ -304,6 +304,11 @@ jobs:
         with:
           context: docker-build-context
           file: docker-build-context/Dockerfile
+          # The Dockerfile is multi-stage: 'builder' compiles OpenSSL and
+          # 'runtime' is the slim image we publish (no compiler toolchain).
+          # Pin the target so a future stage appended at the end can never
+          # accidentally become the published image.
+          target: runtime
           # No 'platforms' — each runner builds for its native arch
           # (amd64 on ubuntu-24.04, arm64 on ubuntu-24.04-arm).
           tags: |
@@ -368,6 +373,48 @@ jobs:
           grep -q "funasr-wss-server-2pass" /tmp/help.txt
           grep -q "model-dir" /tmp/help.txt
           echo "==> Smoke test passed"
+
+      - name: Assert the runtime image carries no compiler toolchain
+        # The image is published to GHCR and gets scanned by registry
+        # scanners, which used to report gcc / cpp (CVE-2020-11023)
+        # because build-essential was left in the final image. The
+        # Dockerfile is multi-stage now; this step makes sure nobody
+        # reintroduces a compiler into the runtime stage.
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/funasr-wss:${{ matrix.tag_suffix }}-latest
+        run: |
+          set -euo pipefail
+
+          docker run --rm --platform "${{ matrix.platform }}" \
+            --entrypoint dpkg "$IMAGE" -l > /tmp/dpkg.txt
+
+          echo "==> gcc-family packages in the image:"
+          grep -E '^ii[[:space:]]+(gcc|g\+\+|cpp|gfortran|binutils|make|build-essential)' \
+            /tmp/dpkg.txt || echo "(none)"
+
+          # gcc-N-base ships libgcc_s.so.1 and is a hard dependency of
+          # libstdc++6 / libgcc-s1 — it contains no compiler and stays.
+          bad="$(awk '$1=="ii"{print $2}' /tmp/dpkg.txt \
+                 | grep -E '^(gcc|g\+\+|cpp|gfortran|binutils|make|build-essential|dpkg-dev|libc6-dev)' \
+                 | grep -vE '^gcc-[0-9]+-base$' || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::compiler toolchain found in the runtime image: $bad"
+            exit 1
+          fi
+
+          echo "==> OpenSSL in use:"
+          docker run --rm --platform "${{ matrix.platform }}" \
+            --entrypoint openssl "$IMAGE" version | tee /tmp/ssl.txt
+          grep -q "3.6.1" /tmp/ssl.txt
+
+          echo "==> Shared library resolution (informational):"
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint /bin/sh "$IMAGE" -c \
+            'for f in /workspace/funasr-wss-server-2pass /opt/funasr-build/*.so* /opt/onnxruntime/lib/*.so*; do
+               miss=$(ldd "$f" 2>/dev/null | grep "not found" || true)
+               [ -n "$miss" ] && echo "$miss  <-- $f"
+             done; true'
+
+          echo "==> Toolchain check passed"
 
   # ==========================================================
   # Job 4: End-to-end ASR test

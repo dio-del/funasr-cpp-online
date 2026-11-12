@@ -111,7 +111,7 @@ python3 src/test/funasr_wss_client-10095.py \
 
 ## Docker
 
-`src/websocket/docker/Dockerfile` 基于 `ubuntu:26.04`，在镜像内源码编译 OpenSSL 3.6.1，并且**只负责拷贝本地已编译好的二进制 —— 它不编译本项目**。构建上下文必须包含：
+`src/websocket/docker/Dockerfile` 基于 `ubuntu:26.04`，**多阶段构建**，并且**只负责拷贝本地已编译好的二进制 —— 它不编译本项目**。构建上下文必须包含：
 
 ```
 Dockerfile
@@ -122,9 +122,21 @@ ffmpeg-<arch>/
 openssl-3.6.1.tar.gz
 ```
 
+三个阶段：
+
+| 阶段 | 内容 |
+|---|---|
+| `base` | 只配置 apt 镜像源（arm64 走 ports.ubuntu.com，amd64 走 aliyun），两个子阶段继承 |
+| `builder` | 装 `build-essential` + `perl`，源码编译 OpenSSL 3.6.1 到 `/opt/app/openssl-3.6.1` |
+| `runtime` | **最终发布的镜像**。只装运行时依赖（`libstdc++6`、`libgcc-s1`、`libopenblas0`、`libasound2t64`、`ca-certificates`），从 builder 拷 OpenSSL 安装树，再拷本项目的二进制和 `.so` |
+
+**为什么必须分阶段**：早先是单阶段构建，`build-essential` 装完就留在最终镜像里，镜像扫描平台会把 `gcc` / `cpp` 报成风险组件（CVE-2020-11023，版本区间匹配过宽的误报，但处置方式一样）。运行镜像本来就不需要编译器，拆开后两个组件直接消失。CI 的 `test-image` job 里有一条断言守着这个约束（镜像内不得出现 `gcc` / `cpp` / `g++` / `make` / `binutils` 等编译工具链包）。
+
+注意 `gcc-N-base` 仍然存在：它是 `libstdc++6` / `libgcc-s1` 的硬依赖，只提供 `libgcc_s.so.1` 这类运行时文件，不含编译器，无法也不应移除。
+
 `src/websocket/docker/onnxruntime-amd64` 和 `ffmpeg-amd64` 是指向仓库根目录解压根的软链接；CI 用 `cp -rL` 重新拷贝成真实目录，因为 `docker build` 无法解析指向上下文之外的软链接。
 
-架构映射：`ARG TARGETARCH` → OpenSSL Configure 的 `linux-x86_64` / `linux-aarch64`，系统库目录则用 `x86_64-linux-gnu` / `aarch64-linux-gnu`。OpenSSL 的默认 `libdir` 在两个平台上不一致，所以 Dockerfile 既传了 `--libdir=lib`，又在拷贝 `.so` 到系统库目录之前**先探测真实路径**。
+架构映射：`ARG TARGETARCH` → OpenSSL Configure 的 `linux-x86_64` / `linux-aarch64`，系统库目录则用 `x86_64-linux-gnu` / `aarch64-linux-gnu`。OpenSSL 的默认 `libdir` 在两个平台上不一致，所以 Dockerfile 既传了 `--libdir=lib`，又在 builder 阶段用 `test -f .../lib/libssl.so.3` 断言它确实落在 `lib/` 下 —— 不然 runtime 阶段会静默回退到发行版的 `libssl3t64`。
 
 `src/websocket/docker/entrypoint.sh` 把环境变量（`MODEL_DIR`、`VAD_DIR`、`PORT`、`DECODER_THREAD_NUM` 等）映射成命令行参数，并自动计算线程池大小（`io_thread_num = ceil(cpus/16)`，`model_thread_num = 1`）。注意 entrypoint **不是**镜像的 `ENTRYPOINT` —— Dockerfile 只设了 `WORKDIR /workspace` 并拷贝二进制；README 里的 `docker run` 是显式覆盖了启动命令。
 
@@ -133,9 +145,11 @@ openssl-3.6.1.tar.gz
 四个 job，各自跑在**原生架构** runner 上（`ubuntu-24.04` 和 `ubuntu-24.04-arm`），不使用 QEMU 模拟：
 
 1. `build-binary` —— 按架构 cmake 配置 + 编译，上传 `funasr-wss-server-2pass` 和 `*.so` 产物。
-2. `build-image` —— 组装 Docker 构建上下文，`docker/build-push-action` 推送 `ghcr.io/<owner>/funasr-wss:{amd64|arm64}-latest` 和 `:{sha}-{arch}`（PR 不推送）。
-3. `test-image` —— 冒烟测试：拉镜像，用 `--help` 跑一遍二进制，grep 检查 `funasr-wss-server-2pass` 和 `model-dir`。
+2. `build-image` —— 组装 Docker 构建上下文，`docker/build-push-action`（`target: runtime`）推送 `ghcr.io/<owner>/funasr-wss:{amd64|arm64}-latest` 和 `:{sha}-{arch}`（PR 不推送）。
+3. `test-image` —— 冒烟测试：拉镜像，用 `--help` 跑一遍二进制，grep 检查 `funasr-wss-server-2pass` 和 `model-dir`；再断言**最终镜像里没有编译工具链**（`gcc` / `cpp` / `g++` / `make` / `binutils` 等，`gcc-N-base` 除外）且 `openssl version` 是 3.6.1。
 4. `test-image-e2e` —— 启动容器，等待 10095 端口，用 Python 客户端跑两个 wav，把转写结果作为 artifact 上传。**它不校验识别准确率** —— CER/WER 校验是后续待办。
+
+> 已知短板：镜像里没有 Python、CI 也没挂载模型，所以 `test-image-e2e` 目前是空跑（服务端启动即退出，脚本用 `|| true` 吞掉了失败），检测不到运行时回归。真正的兜底是 `test-image` 里的 `--help` 冒烟测试（exec 时会解析整个 `DT_NEEDED` 闭包）和上面的工具链断言。
 
 ## 架构详解
 
