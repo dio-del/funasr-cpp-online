@@ -199,12 +199,14 @@ openssl-3.6.1.tar.gz
 
 **服务端 → 客户端**（JSON 文本帧）
 
-字段：`text`、`mode`（只有 `2pass-online` / `2pass-offline` 两个取值 —— 即便客户端请求的是 `mode: "online"`，服务端回帧的 `mode` 仍是 `2pass-online`）、`slice_type`（`0` = 句子开始，`1` = 识别中，`2` = 句子结束）、`index`（句子计数器，句末自增）、`online_seq`（实时帧序号，仅在客户端协商了 `seq_header` 时出现）、`timestamp`（毫秒）、`start_time` / `end_time`（仅离线结果带）、`stamp_sents`、`wav_name`、`is_final`。
+字段：`text`、`mode`（只有 `2pass-online` / `2pass-offline` 两个取值 —— 即便客户端请求的是 `mode: "online"`，服务端回帧的 `mode` 仍是 `2pass-online`）、`slice_type`（`0` = 句子开始，`1` = 识别中，`2` = 句子结束）、`index`（句子计数器，句末自增）、`online_seq`（实时帧序号，客户端没协商 `seq_header` 时为 `-1`）、`timestamp`（毫秒）、`start_time` / `end_time`（仅离线结果带）、`stamp_sents`、`wav_name`、`is_final`。
 
-**`index` 和 `online_seq` 是两回事，别搞混**：`index` 是**句子**计数器（离线结果出来时 +1），`online_seq` 是**音频帧**序号（客户端发什么服务端就回什么）。两者互不影响。
+**`index` 和 `online_seq` 是两回事，别搞混**：`index` 是**句子**计数器（离线结果出来时 +1），`online_seq` 是**音频帧**序号（客户端发什么服务端就回什么，没协商序号头时为 -1）。两者互不影响。
 
 关键行为：
 
+- **每个音频块都回一帧**：即使推理结果为空（静音段、纯噪声），服务端也会回一帧 `text` 为空串的 JSON —— 保证"一帧音频对应一帧回包"。客户端可以靠 `online_seq` 逐帧对齐。唯一例外是 `FunTpassInferBuffer` 返回 `nullptr`（推理没跑起来），那种情况中间帧不回。
+- 空帧的 `mode` 仍按当前模式给出（online/2pass → `2pass-online`，offline → `2pass-offline`），`slice_type` 为 1（识别中），`index` 是当前句子序号。
 - **离线结果**（`mode: "2pass-offline"`）会在同一帧里**覆盖** `text`，所以客户端读 `text` 时先看到在线假设、随后被离线结果修正。
 - `mode: "online"` 不会输出 `2pass-offline` 文本，但在最后一个 chunk 仍会推进 `index` 并复位 `is_sentence_started`，保证下一句话以 `slice_type: 0` 开始。
 - `wav_format` 不是 `pcm`/`PCM` 时，会返回 `"ERROR. Real-time transcription service ONLY SUPPORT PCM stream."`。

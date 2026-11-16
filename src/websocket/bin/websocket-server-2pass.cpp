@@ -24,7 +24,7 @@ extern float global_beam_, lattice_beam_, am_scale_;
 
 // 客户端协商开启序号头(seq_header)后, 每个二进制帧前面带 4 字节大端 uint32 序号
 static const int kSeqHeaderSize = 4;
-// 传给解码链路的 online_seq 为该值时表示"未开启序号头", 下行 JSON 不带 online_seq 字段
+// 传给解码链路的 online_seq 为该值时表示"未开启序号头"(客户端没协商 seq_header)
 static const int64_t kSeqDisabled = -1;
 
 int64_t getCurrentTimeMillis() {
@@ -80,6 +80,12 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
   websocketpp::lib::error_code ec;
   nlohmann::json jsonresult;
   jsonresult["text"] = "";
+  // 先给出完整的回包骨架: 即使推理结果为空(静音段)也回一帧,
+  // 保证"一帧音频对应一帧回包", 客户端可以靠 online_seq 逐帧对齐
+  jsonresult["mode"] =
+      (modetype == "offline") ? "2pass-offline" : "2pass-online";
+  jsonresult["slice_type"] = 1;
+  jsonresult["index"] = data_msg->index;
 
   const char* online_result = FunASRGetResult(result, 0);
   if (online_result != nullptr && online_result[0] != '\0') {
@@ -144,11 +150,10 @@ nlohmann::json handle_result(FUNASR_RESULT result, websocketpp::connection_hdl& 
     }
   }
 
-  // 客户端协商开启序号头时, 把收到该段音频时的实时帧序号原样带回。
+  // 把收到该段音频时的实时帧序号原样带回。
+  // 未协商序号头的连接为 kSeqDisabled(-1), 字段同样保留, 保证回包结构一致。
   // 与上面的 index(句子计数器)无关, 两个字段互不干扰。
-  if (online_seq != kSeqDisabled) {
-    jsonresult["online_seq"] = online_seq;
-  }
+  jsonresult["online_seq"] = online_seq;
 
   return jsonresult;
 }
@@ -219,15 +224,13 @@ void WebSocketServer::do_decoder(
         nlohmann::json jsonresult = handle_result(Result, hdl, data_map, modetype, false, online_seq);
         jsonresult["wav_name"] = wav_name;
         jsonresult["is_final"] = false;
-        if (jsonresult["text"] != "") {
-          //LOG(INFO) << "jsonresult: " << jsonresult.dump(4);
-          if (is_ssl) {
-            wss_server_->send(hdl, jsonresult.dump(),
-                              websocketpp::frame::opcode::text, ec);
-          } else {
-            server_->send(hdl, jsonresult.dump(),
-                          websocketpp::frame::opcode::text, ec);
-          }
+        //LOG(INFO) << "jsonresult: " << jsonresult.dump(4);
+        if (is_ssl) {
+          wss_server_->send(hdl, jsonresult.dump(),
+                            websocketpp::frame::opcode::text, ec);
+        } else {
+          server_->send(hdl, jsonresult.dump(),
+                        websocketpp::frame::opcode::text, ec);
         }
         FunASRFreeResult(Result);
       }
@@ -278,9 +281,7 @@ void WebSocketServer::do_decoder(
           jsonresult["text"] = "ERROR. Real-time transcription service ONLY SUPPORT PCM stream.";
           jsonresult["wav_name"] = wav_name;
           jsonresult["is_final"] = true;
-          if (online_seq != kSeqDisabled) {
-            jsonresult["online_seq"] = online_seq;
-          }
+          jsonresult["online_seq"] = online_seq;
           if (is_ssl) {
             wss_server_->send(hdl, jsonresult.dump(),
                               websocketpp::frame::opcode::text, ec);

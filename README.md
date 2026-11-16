@@ -91,7 +91,7 @@ docker run -d \
     -p 10095:10095 \
     --name funasr-wss-amd64 \
     -v /mnt/c/Users/xuptd/Desktop/CMB-WSL/funasr-cpp-online/models:/home/funasr/models \
-    funasr-amd64-20261103-djh:latest \
+    funasr-amd64-20260923-djh:latest \
     /workspace/funasr-wss-server-2pass \
     --download-model-dir /home/funasr/models \
     --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx \
